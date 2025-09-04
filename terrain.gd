@@ -8,6 +8,10 @@ var base_ground_level = 1200.0
 var slope_range = 100.0
 
 func _ready() -> void:
+	
+	noise1.seed = randi()
+	noise2.seed = randi()
+	
 	var points : PackedVector2Array = []
 	points.append(Vector2(-3000, base_ground_level * 4))
 	for i in range(-3000, 3000, 10):
