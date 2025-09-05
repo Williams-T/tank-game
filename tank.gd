@@ -73,7 +73,7 @@ func _physics_process(delta: float):
 		update_trajectory_cache()
 	
 	if Input.is_action_just_pressed("fire"):
-		var turret_tip = global_position + turret_origin_offset + Vector2(50, 0).rotated(global_rotation + deg_to_rad(aim_angle + aim_mod))
+		var turret_tip = global_position + turret_origin_offset.rotated(global_rotation) + Vector2(50, 0).rotated(global_rotation + deg_to_rad(aim_angle + aim_mod))
 		var firing_angle = global_rotation + deg_to_rad(aim_angle + aim_mod)
 		var p = Projectile.new(turret_tip, firing_angle, power)
 		p.projectile_hit.connect(_on_projectile_hit)
@@ -117,6 +117,8 @@ func _physics_process(delta: float):
 	queue_redraw()
 
 func update_trajectory_cache():
+	if !perma_show_trajectory:
+		return
 	var current_aim = aim_angle + aim_mod
 	
 	# Only recalculate if aim or position changed significantly
