@@ -117,8 +117,9 @@ func _physics_process(delta: float):
 	queue_redraw()
 
 func update_trajectory_cache():
-	if !perma_show_trajectory:
-		return
+	if !show_trajectory:
+		if !perma_show_trajectory:
+			return
 	var current_aim = aim_angle + aim_mod
 	
 	# Only recalculate if aim or position changed significantly
@@ -181,7 +182,8 @@ func align_to_terrain(delta: float):
 
 func _on_projectile_hit(impact_pos: Vector2, impact_angle: float, target_type: String, target: Node):
 	print("Hit %s at %s with angle %s" % [target_type, impact_pos, rad_to_deg(impact_angle)])
-
+	if target_type == "terrain" and target:
+		target.create_crater(impact_pos, 50.0 + randf_range(-10, 10))
 func get_aim_angle() -> float:
 	# For aiming your weapon later
 	return rotation
@@ -194,8 +196,8 @@ func _draw() -> void:
 	
 	# Draw cached trajectory (only while aiming)
 	# turned off for now, uncomment the following if statement and comment the other one to switch.
-	#if (show_trajectory and cached_trajectory.size() > 1): 
-	if perma_show_trajectory:
+	if (show_trajectory and cached_trajectory.size() > 1): 
+	#if perma_show_trajectory:
 		for i in range(cached_trajectory.size() - 1):
 			if i % 2 == 0:  # Every other point for performance
 				var local_start = to_local(cached_trajectory[i])
