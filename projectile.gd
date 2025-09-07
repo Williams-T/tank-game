@@ -204,8 +204,6 @@ func get_velocity_angle_at_time(t: float) -> float:
 	return atan2(vy, vx)
 
 func calculate_flat_ground_impact(ground_y: float) -> float:
-	# Solve: origin.y + velocity_y * t + 0.5 * gravity * t^2 = ground_y
-	# 0.5 * gravity * t^2 + velocity_y * t + (origin.y - ground_y) = 0
 	var a = 0.5 * gravity
 	var b = velocity_y
 	var c = origin.y - ground_y
@@ -281,9 +279,6 @@ func emit_impact_signal() -> void:
 	# Check what we hit
 	var target_type = "terrain"
 	var target: Node = get_terrain_node()
-	
-	# You can expand this to check for tank hits
-	# by casting a small area around impact_position
 	
 	projectile_hit.emit(impact_position, impact_angle, target_type, target)
 

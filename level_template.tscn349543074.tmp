@@ -2,7 +2,7 @@
 
 [ext_resource type="Script" uid="uid://bjoltcuwg3ltw" path="res://level_template.gd" id="1_7hsss"]
 [ext_resource type="Script" uid="uid://b6jec1tsrjda1" path="res://terrain.gd" id="2_yqaxe"]
-[ext_resource type="Texture2D" uid="uid://xq3x0fygna3o" path="res://ground_texture2.png" id="3_smkg2"]
+[ext_resource type="Texture2D" uid="uid://bhs8i2pccp47c" path="res://ground_texture.png" id="3_x24lp"]
 [ext_resource type="Script" uid="uid://chr0hv2dmtqlb" path="res://tank.gd" id="4_smkg2"]
 
 [sub_resource type="Gradient" id="Gradient_7hsss"]
@@ -42,7 +42,7 @@ noise2 = SubResource("FastNoiseLite_x24lp")
 [node name="Polygon2D" type="Polygon2D" parent="Terrain"]
 texture_filter = 1
 texture_repeat = 2
-texture = ExtResource("3_smkg2")
+texture = ExtResource("3_x24lp")
 
 [node name="StaticBody2D" type="StaticBody2D" parent="Terrain/Polygon2D"]
 

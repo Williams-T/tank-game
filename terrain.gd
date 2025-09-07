@@ -11,7 +11,7 @@ extends Node2D
 
 var base_ground_level = 1200.0
 var slope_range = 100.0
-var vertex_gap = 10.0
+var vertex_gap = 30.0
 
 func _ready() -> void:
 	
@@ -20,7 +20,7 @@ func _ready() -> void:
 	
 	var points : PackedVector2Array = []
 	points.append(Vector2(-3000, base_ground_level * 4))
-	for i in range(-3000, 3000, vertex_gap): # generate base terrain
+	for i in range(vertex_gap * -300, vertex_gap * 300, vertex_gap): # generate base terrain
 		points.append(Vector2(i, int(base_ground_level + (slope_range * (noise1.get_noise_1d(i)+noise2.get_noise_1d(i))))))
 	var neighbors = []
 	for ii in points.size(): # make terrain less jaggy
@@ -61,7 +61,7 @@ func create_circle_polygon(center: Vector2, radius: float, segments: int) -> Pac
 	var circle_points: PackedVector2Array = []
 	for i in range(segments):
 		var angle = (float(i) / float(segments)) * TAU
-		var point = (center + Vector2(cos(angle), sin(angle)) * radius) + Vector2(randf_range(-3, 3),randf_range(-3,3))
+		var point = (center + Vector2(cos(angle), sin(angle)) * radius) + Vector2(randf_range(-2, 2),randf_range(-2,2))
 		circle_points.append(point)
 	return circle_points
 
