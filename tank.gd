@@ -4,25 +4,25 @@ class_name Tank
 # Movement settings
 @export var move_speed : float = 300.0
 @export var gravity : float = 980.0
-@export var rotation_speed : float = 2.0  # How fast tank aligns to terrain
+@export var rotation_speed : float = 3.0  # How fast tank aligns to terrain
 
 @onready var right_ray  : RayCast2D = $RayCastRight
 @onready var center_ray : RayCast2D =  $RayCastCenter
 @onready var left_ray  : RayCast2D = $RayCastLeft
 
 @onready var collision_shape : CollisionShape2D = $CollisionShape2D
-
+@onready var turret_shape : CollisionShape2D = $turret_shape
 @export var body_sprite : Sprite2D
 @export var left_wheel : Sprite2D
 @export var right_wheel : Sprite2D
 
-var rotation_divisor = 300.0
+#var rotation_divisor = 300.0
 var aim_angle = -90.0
 var aim_mod = 0.0
 
 var power = 500.0
 
-var projectile_counter = 0
+#var projectile_counter = 0
 var turret_origin_offset = Vector2(0, -10)
 var turret_length = Vector2(50,0)
 
@@ -31,11 +31,11 @@ var last_aim_angle: float = -999.0
 var last_position: Vector2 = Vector2(-999, -999)
 var last_power_level : float = -999.0
 var show_trajectory: bool = false
-var perma_show_trajectory : bool = false
+var perma_show_trajectory : bool = true
 
 var is_grounded: bool = false
 var ground_check_distance: float = 30.0  # Will be set in _ready
-var stick_angle_threshold: float = 160.0  # Degrees from upright
+var stick_angle_threshold: float = 190.0  # Degrees from upright
 var ground_normal: Vector2 = Vector2.UP  # Track the current ground normal
 
 func _ready() -> void:
@@ -43,7 +43,7 @@ func _ready() -> void:
 		adjust_collision_bounds(body_sprite.texture)
 		
 		# Set ground check distance to 1/4 of tank height
-		ground_check_distance = body_sprite.texture.get_height() * 0.5
+		ground_check_distance = body_sprite.texture.get_height() * 0.25
 	else:
 		# Fallback if no sprite
 		var rect_shape = collision_shape.shape as RectangleShape2D
@@ -127,11 +127,17 @@ func _physics_process(delta: float):
 	# Handle aiming/power controls (works whether grounded or airborne)
 	if not Input.is_key_pressed(KEY_CTRL):
 		if Input.is_action_pressed("aim_left"):
-			aim_mod = clamp(aim_mod - 1.0, -66.0, 66.0)
-			update_trajectory_cache()
+			if aim_mod != -66.0:
+				aim_mod = clamp(aim_mod - 1.0, -66.0, 66.0)
+				update_trajectory_cache()
+			else:
+				rotation -= delta * PI / 1.5
 		elif Input.is_action_pressed("aim_right"):
-			aim_mod = clamp(aim_mod + 1.0, -66.0, 66.0)
-			update_trajectory_cache()
+			if aim_mod != 66.0:
+				aim_mod = clamp(aim_mod + 1.0, -66.0, 66.0)
+				update_trajectory_cache()
+			else:
+				rotation += delta * PI / 1.5
 	
 	if Input.is_action_pressed("power_up"):
 		power = clamp(power + 500.0*delta, 100.0, 1000.0)
@@ -189,9 +195,10 @@ func _physics_process(delta: float):
 		if direction != 0:
 			velocity.x += 1000.0 * delta * direction
 		velocity.x *= 0.99
-
 	# Apply movement
 	move_and_slide()
+	turret_shape.rotation = turret_origin_offset.angle_to(turret_origin_offset + turret_length.rotated(deg_to_rad(aim_angle + aim_mod)))
+	turret_shape.position = turret_origin_offset.lerp(turret_origin_offset + turret_length.rotated(deg_to_rad(aim_angle + aim_mod)), 0.5)
 	queue_redraw()
 
 func update_trajectory_cache():
@@ -257,19 +264,78 @@ func align_to_terrain(delta: float):
 		if lowest_point < 5 and lowest_point > -5:
 			position.y += lowest_point
 
-func _on_projectile_hit(impact_pos: Vector2, impact_angle: float, target_type: String, target: Node):
+func _on_projectile_hit(impact_pos: Vector2, impact_angle: float, target_type: String, targets: Array):
 	print("Hit %s at %s with angle %s" % [target_type, impact_pos, rad_to_deg(impact_angle)])
-	if target_type == "terrain" and target:
-		target.create_crater(impact_pos, 50.0 + randf_range(-10, 10))
-func get_aim_angle() -> float:
-	# For aiming your weapon later
-	return rotation
+	if targets.size() > 0:
+		if target_type == "terrain":
+			targets[0].get_parent().get_parent().call_deferred('create_crater', impact_pos, 50.0 + randf_range(-10, 10))
+		elif target_type == "tank":
+			targets[0].get_hit(impact_pos.angle_to_point(targets[0].position))
+		else:
+			for target in targets:
+				if target is StaticBody2D: # Terrain
+					target.get_parent().get_parent().call_deferred('create_crater', impact_pos, 50.0 + randf_range(-10, 10))
+				elif target is CharacterBody2D: # Tank
+					target.get_hit(impact_pos.angle_to_point(target.position))
+
+#func get_hit(impact_angle: float, strength_multiplier: float = 1.0) -> void:
+	#var base_knockback_force = 800.0  # Base knockback strength
+	#var knockback_force = base_knockback_force * strength_multiplier
+	#
+	#var launch_angle: float
+	#
+	#if is_grounded:
+		## Grounded: reflect the impact angle horizontally (bounce off ground)
+		## This simulates the tank bouncing off the terrain
+		#launch_angle = -impact_angle
+		#
+		## Ensure we're launching upward for dramatic effect
+		#if sin(launch_angle) > 0:  # If reflected angle still points downward
+			#launch_angle = PI - launch_angle  # Flip to point upward
+			#
+	#else:
+		## Airborne: continue in the direction of impact
+		#launch_angle = impact_angle
+	#
+	## Apply knockback velocity
+	#var knockback_velocity = Vector2(cos(launch_angle), sin(launch_angle)) * knockback_force
+	#velocity += knockback_velocity
+	#
+	## Force tank to become airborne for dramatic knockback effect
+	#is_grounded = false
+	#
+	#print("Tank hit! Launch angle: %s degrees, Force: %s" % [rad_to_deg(launch_angle), knockback_force])
+
+func get_hit(impact_angle: float, strength_multiplier: float = 1.0) -> void:
+	var base_knockback_force = 800.0
+	var knockback_force = base_knockback_force * strength_multiplier
+	
+	# Get the impact direction as a velocity vector
+	var impact_direction = Vector2(cos(impact_angle), sin(impact_angle))
+	#var distance = abs()
+	
+	var knockback_velocity: Vector2
+	
+	if is_grounded:
+		# Grounded: horizontal reflection (flip Y component, keep X)
+		# This simulates bouncing off the ground
+		knockback_velocity = Vector2(impact_direction.x, -abs(impact_direction.y)) * knockback_force
+	else:
+		# Airborne: continue in the impact direction
+		knockback_velocity = impact_direction * knockback_force
+	
+	# Apply the knockback
+	velocity += knockback_velocity
+	is_grounded = false
+	
+	print("Tank hit! Knockback: %s, Force: %s" % [knockback_velocity, knockback_force])
 
 func _draw() -> void:
 	if !body_sprite:
 		draw_rect(collision_shape.shape.get_rect(), Color.CADET_BLUE)
 	draw_circle(turret_origin_offset, 10.0, Color.AQUA)
 	draw_line(turret_origin_offset, turret_origin_offset + turret_length.rotated(deg_to_rad(aim_angle + aim_mod)), Color.AQUAMARINE, 10.0)
+	# draw power gauge over turret barrel
 	var power_offset = power / 1000.0
 	draw_line(turret_origin_offset, turret_origin_offset + Vector2((turret_length.x * 0.9) * power_offset, 0).rotated(deg_to_rad(aim_angle + aim_mod)), Color.CORAL, 2.0)
 	

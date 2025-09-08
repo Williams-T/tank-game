@@ -2,7 +2,7 @@
 
 [ext_resource type="Script" uid="uid://bd55osawqyio0" path="res://projectile.gd" id="1_a85iw"]
 
-[node name="Projectile" type="Node2D"]
+[node name="Projectile" type="Area2D"]
 script = ExtResource("1_a85iw")
 
 [node name="Sprite" type="Sprite2D" parent="."]

@@ -5,9 +5,9 @@ extends Node2D
 @export var noise1 : FastNoiseLite = FastNoiseLite.new()
 @export var noise2 : FastNoiseLite = FastNoiseLite.new()
 
-@export var crater_base_radius: float = 80.0
-@export var crater_randomness: float = 0.3
-@export var crater_points: int = 24
+@export var crater_base_radius: float = 80.0 #
+@export var crater_randomness: float = 0.3   # I haven't plugged these in yet
+@export var crater_points: int = 24          #
 
 var base_ground_level = 1200.0
 var slope_range = 100.0
@@ -19,7 +19,7 @@ func _ready() -> void:
 	noise2.seed = randi()
 	
 	var points : PackedVector2Array = []
-	points.append(Vector2(-3000, base_ground_level * 4))
+	points.append(Vector2(vertex_gap * -300, base_ground_level * 4))
 	for i in range(vertex_gap * -300, vertex_gap * 300, vertex_gap): # generate base terrain
 		points.append(Vector2(i, int(base_ground_level + (slope_range * (noise1.get_noise_1d(i)+noise2.get_noise_1d(i))))))
 	var neighbors = []
@@ -27,7 +27,7 @@ func _ready() -> void:
 		if ii != 0 and ii != points.size() - 1:
 			neighbors = [int(points[ii-1].y), int(points[ii+1].y)]
 			points[ii] = Vector2(points[ii].x, neighbors[0]).lerp(Vector2(points[ii].x, neighbors[1]), 0.5)
-	points.append(Vector2(3000, base_ground_level * 4))
+	points.append(Vector2(vertex_gap * 300, base_ground_level * 4))
 	poly.polygon = points
 	body_coll.polygon = points
 

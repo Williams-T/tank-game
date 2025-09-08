@@ -1,9 +1,9 @@
-[gd_scene load_steps=10 format=3 uid="uid://gb7rfse16rqm"]
+[gd_scene load_steps=9 format=3 uid="uid://gb7rfse16rqm"]
 
 [ext_resource type="Script" uid="uid://bjoltcuwg3ltw" path="res://level_template.gd" id="1_7hsss"]
 [ext_resource type="Script" uid="uid://b6jec1tsrjda1" path="res://terrain.gd" id="2_yqaxe"]
 [ext_resource type="Texture2D" uid="uid://xq3x0fygna3o" path="res://ground_texture2.png" id="3_smkg2"]
-[ext_resource type="Script" uid="uid://chr0hv2dmtqlb" path="res://tank.gd" id="4_smkg2"]
+[ext_resource type="PackedScene" uid="uid://bu8fs3r5if701" path="res://tank.tscn" id="4_smkg2"]
 
 [sub_resource type="Gradient" id="Gradient_7hsss"]
 interpolation_mode = 2
@@ -17,10 +17,6 @@ fill_to = Vector2(0, 1)
 
 [sub_resource type="FastNoiseLite" id="FastNoiseLite_x24lp"]
 seed = 1
-
-[sub_resource type="RectangleShape2D" id="RectangleShape2D_x24lp"]
-custom_solver_bias = 0.1
-size = Vector2(60, 20)
 
 [node name="LevelTemplate" type="Node2D"]
 script = ExtResource("1_7hsss")
@@ -48,26 +44,5 @@ texture = ExtResource("3_smkg2")
 
 [node name="CollisionPolygon2D" type="CollisionPolygon2D" parent="Terrain/Polygon2D/StaticBody2D"]
 
-[node name="Tank" type="CharacterBody2D" parent="."]
+[node name="Tank" parent="." instance=ExtResource("4_smkg2")]
 position = Vector2(644, 184)
-script = ExtResource("4_smkg2")
-
-[node name="CollisionShape2D" type="CollisionShape2D" parent="Tank"]
-shape = SubResource("RectangleShape2D_x24lp")
-
-[node name="Camera2D" type="Camera2D" parent="Tank"]
-zoom = Vector2(3, 3)
-
-[node name="RayCastCenter" type="RayCast2D" parent="Tank"]
-position = Vector2(0, 9)
-target_position = Vector2(0, 30)
-
-[node name="RayCastRight" type="RayCast2D" parent="Tank"]
-position = Vector2(30, 9)
-target_position = Vector2(0, 30)
-
-[node name="RayCastLeft" type="RayCast2D" parent="Tank"]
-position = Vector2(-30, 9)
-target_position = Vector2(0, 30)
-
-[node name="Sprite2D" type="Sprite2D" parent="Tank"]
