@@ -16,6 +16,11 @@ run/print_header=false
 config/features=PackedStringArray("4.5", "GL Compatibility")
 config/icon="res://icon.svg"
 
+[autoload]
+
+GameStateManager="*res://game_state_manager.gd"
+Cam="*res://cam.tscn"
+
 [input]
 
 move_left={

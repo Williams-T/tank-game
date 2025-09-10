@@ -16,7 +16,7 @@ script = ExtResource("1_6lwfj")
 shape = SubResource("RectangleShape2D_x24lp")
 
 [node name="Camera2D" type="Camera2D" parent="."]
-zoom = Vector2(3, 3)
+enabled = false
 
 [node name="RayCastCenter" type="RayCast2D" parent="."]
 position = Vector2(0, 9)

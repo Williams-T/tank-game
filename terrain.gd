@@ -1,4 +1,6 @@
 extends Node2D
+class_name Terrain
+
 @onready var poly : Polygon2D = $Polygon2D
 @onready var body : StaticBody2D = $Polygon2D/StaticBody2D
 @onready var body_coll : CollisionPolygon2D = $Polygon2D/StaticBody2D/CollisionPolygon2D

@@ -25,26 +25,26 @@ static func get_trajectory_arc(origin: Vector2, angle: float, power: float, terr
 	# Calculate velocity components
 	var velocity_x = power * cos(angle)
 	var velocity_y = power * sin(angle)
-	var _gravity = 980.0
+	var _grav = 980.0
 	
 	# Calculate impact time using raycast method
-	var impact_time = calculate_impact_time_static(origin, velocity_x, velocity_y, _gravity, terrain)
+	var impact_time = calculate_impact_time_static(origin, velocity_x, velocity_y, _grav, terrain)
 	
 	# Generate points along the arc
 	for i in range(points_count + 1):
 		var t = (float(i) / float(points_count)) * impact_time
 		var x = origin.x + velocity_x * t
-		var y = origin.y + velocity_y * t + 0.5 * _gravity * t * t
+		var y = origin.y + velocity_y * t + 0.5 * _grav * t * t
 		var point = Vector2(x, y)
 		trajectory_points.append(point)
 	
 	return trajectory_points
 
 # Static method for calculating impact time using raycasts
-static func calculate_impact_time_static(origin: Vector2, velocity_x: float, velocity_y: float, _gravity: float, terrain: Node = null) -> float:
+static func calculate_impact_time_static(origin: Vector2, velocity_x: float, velocity_y: float, _grav: float, terrain: Node = null) -> float:
 	if not terrain:
 		# Fallback: flat ground at y=1200
-		var a = 0.5 * _gravity
+		var a = 0.5 * _grav
 		var b = velocity_y
 		var c = origin.y - 1200.0
 		var discriminant = b * b - 4 * a * c
@@ -74,7 +74,7 @@ static func calculate_impact_time_static(origin: Vector2, velocity_x: float, vel
 	for t in range(1, int(max_time / sample_interval)):
 		var time = t * sample_interval
 		var x = origin.x + velocity_x * time
-		var y = origin.y + velocity_y * time + 0.5 * _gravity * time * time
+		var y = origin.y + velocity_y * time + 0.5 * _grav * time * time
 		var current_pos = Vector2(x, y)
 		
 		# Cast ray from last position to current position
@@ -120,6 +120,7 @@ func _ready() -> void:
 	
 	# Connect collision signal
 	body_entered.connect(_on_body_entered)
+	GameStateManager.declare_projectile(self)
 
 func _process(delta: float) -> void:
 	if !monitoring:
@@ -151,7 +152,7 @@ func _on_body_entered(body: Node) -> void:
 	if bodies.size() > 1:
 		target_type = "multiple"
 	projectile_hit.emit(global_position, impact_angle, target_type, bodies)
-	
+	GameStateManager.remove_projectile(self)
 	# Clean up
 	queue_free()
 

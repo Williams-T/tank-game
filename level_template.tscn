@@ -45,4 +45,7 @@ texture = ExtResource("3_smkg2")
 [node name="CollisionPolygon2D" type="CollisionPolygon2D" parent="Terrain/Polygon2D/StaticBody2D"]
 
 [node name="Tank" parent="." instance=ExtResource("4_smkg2")]
-position = Vector2(644, 184)
+position = Vector2(112, 347)
+
+[node name="Tank2" parent="." instance=ExtResource("4_smkg2")]
+position = Vector2(1073, 324)

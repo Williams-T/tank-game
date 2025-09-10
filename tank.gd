@@ -38,6 +38,10 @@ var ground_check_distance: float = 30.0  # Will be set in _ready
 var stick_angle_threshold: float = 190.0  # Degrees from upright
 var ground_normal: Vector2 = Vector2.UP  # Track the current ground normal
 
+# Game State Variables:
+var is_active = false
+var fired_projectile = false
+
 func _ready() -> void:
 	if body_sprite:
 		adjust_collision_bounds(body_sprite.texture)
@@ -57,6 +61,7 @@ func _ready() -> void:
 	left_ray.enabled = true
 	right_ray.target_position = Vector2(0, ground_check_distance).rotated(-0.5)
 	right_ray.enabled = true
+	GameStateManager.declare_player(self)
 
 func check_grounded_state(move_dir: int = 0, extend_rays: bool = false) -> void:
 	if extend_rays:
@@ -116,7 +121,7 @@ func adjust_collision_bounds(body_texture : Texture2D):
 func _physics_process(delta: float):
 	# Get movement input first
 	var direction = 0
-	if Input.is_key_pressed(KEY_CTRL):
+	if Input.is_key_pressed(KEY_CTRL) and is_active:
 		if Input.is_action_pressed("move_left"):
 			direction = -1
 		elif Input.is_action_pressed("move_right"):
@@ -125,7 +130,7 @@ func _physics_process(delta: float):
 	check_grounded_state(direction, nearly_stopped)
 	
 	# Handle aiming/power controls (works whether grounded or airborne)
-	if not Input.is_key_pressed(KEY_CTRL):
+	if not Input.is_key_pressed(KEY_CTRL) and is_active:
 		if Input.is_action_pressed("aim_left"):
 			if aim_mod != -66.0:
 				aim_mod = clamp(aim_mod - 1.0, -66.0, 66.0)
@@ -138,28 +143,30 @@ func _physics_process(delta: float):
 				update_trajectory_cache()
 			else:
 				rotation += delta * PI / 1.5
-	
-	if Input.is_action_pressed("power_up"):
-		power = clamp(power + 500.0*delta, 100.0, 1000.0)
-		update_trajectory_cache()
-	elif Input.is_action_pressed("power_down"):
-		power = clamp(power - 500.0*delta, 100.0, 1000.0)
-		update_trajectory_cache()
-	
-	# Show trajectory while aiming
-	show_trajectory = Input.is_action_pressed("aim_left") or Input.is_action_pressed("aim_right") or Input.is_action_pressed("power_up") or Input.is_action_pressed("power_down")
-	
-	# Update trajectory if position changed significantly
-	if global_position.distance_to(last_position) > 10.0:
-		update_trajectory_cache()
-	
-	# Handle firing
-	if Input.is_action_just_pressed("fire"):
-		var turret_tip = global_position + turret_origin_offset.rotated(global_rotation) + Vector2(50, 0).rotated(global_rotation + deg_to_rad(aim_angle + aim_mod))
-		var firing_angle = global_rotation + deg_to_rad(aim_angle + aim_mod)
-		var p = Projectile.new(turret_tip, firing_angle, power)
-		p.projectile_hit.connect(_on_projectile_hit)
-		get_parent().add_child(p)
+	if is_active:
+		if Input.is_action_pressed("power_up"):
+			power = clamp(power + 500.0*delta, 100.0, 1000.0)
+			update_trajectory_cache()
+		elif Input.is_action_pressed("power_down"):
+			power = clamp(power - 500.0*delta, 100.0, 1000.0)
+			update_trajectory_cache()
+		
+		# Show trajectory while aiming
+		show_trajectory = Input.is_action_pressed("aim_left") or Input.is_action_pressed("aim_right") or Input.is_action_pressed("power_up") or Input.is_action_pressed("power_down")
+		
+		# Update trajectory if position changed significantly
+		if global_position.distance_to(last_position) > 10.0:
+			update_trajectory_cache()
+		
+		# Handle firing
+		if Input.is_action_just_pressed("fire") and is_active and !fired_projectile:
+			var turret_tip = global_position + turret_origin_offset.rotated(global_rotation) + Vector2(50, 0).rotated(global_rotation + deg_to_rad(aim_angle + aim_mod))
+			var firing_angle = global_rotation + deg_to_rad(aim_angle + aim_mod)
+			var p = Projectile.new(turret_tip, firing_angle, power)
+			p.projectile_hit.connect(_on_projectile_hit)
+			get_parent().add_child(p)
+			await get_tree().process_frame
+			fired_projectile = true
 	
 	# Movement and physics based on grounded state
 	if is_grounded:
@@ -274,9 +281,11 @@ func _on_projectile_hit(impact_pos: Vector2, impact_angle: float, target_type: S
 		else:
 			for target in targets:
 				if target is StaticBody2D: # Terrain
-					target.get_parent().get_parent().call_deferred('create_crater', impact_pos, 50.0 + randf_range(-10, 10))
+					if target.get_parent().get_parent().has_method("create_crater"):
+						target.get_parent().get_parent().call_deferred('create_crater', impact_pos, 50.0 + randf_range(-10, 10))
 				elif target is CharacterBody2D: # Tank
 					target.get_hit(impact_pos.angle_to_point(target.position))
+	GameStateManager.end_turn(self)
 
 #func get_hit(impact_angle: float, strength_multiplier: float = 1.0) -> void:
 	#var base_knockback_force = 800.0  # Base knockback strength
@@ -341,7 +350,7 @@ func _draw() -> void:
 	
 	# Draw cached trajectory (only while aiming)
 	# turned off for now, uncomment the following if statement and comment the other one to switch.
-	if (show_trajectory and cached_trajectory.size() > 1): 
+	if (show_trajectory and cached_trajectory.size() > 1 and is_active): 
 	#if perma_show_trajectory:
 		for i in range(cached_trajectory.size() - 1):
 			if i % 2 == 0:  # Every other point for performance
