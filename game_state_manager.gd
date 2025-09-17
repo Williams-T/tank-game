@@ -1,6 +1,7 @@
 extends Node
 
 var players : Array[Tank] = []
+var player_distance := 0.0
 var current_player = 0
 enum game_mode {
 	
@@ -21,8 +22,17 @@ func declare_player(player : Tank):
 		Cam.targets.append(player)
 	if players.size() == 2:
 		start_game()
-func declare_projectile(projectile : Projectile):
+func declare_projectile(projectile):
 	Cam.targets.append(projectile)
 
-func remove_projectile(projectile : Projectile):
+func remove_projectile(projectile):
 	Cam.targets.erase(projectile)
+
+func _process(delta: float) -> void:
+	player_distance = players[0].global_position.distance_to(players[1].global_position)
+	if player_distance > 2000.0:
+		if !Cam.split:
+			Cam.split = true
+	else:
+		if Cam.split:
+			Cam.split = false

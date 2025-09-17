@@ -35,3 +35,7 @@ target_position = Vector2(0, 30)
 [node name="turret_shape" type="CollisionShape2D" parent="."]
 position = Vector2(0, -30)
 shape = SubResource("RectangleShape2D_6lwfj")
+
+[node name="RemoteTransform2D" type="RemoteTransform2D" parent="."]
+update_rotation = false
+update_scale = false

@@ -12,6 +12,9 @@ class_name Tank
 
 @onready var collision_shape : CollisionShape2D = $CollisionShape2D
 @onready var turret_shape : CollisionShape2D = $turret_shape
+@onready var remote_transform : RemoteTransform2D = $RemoteTransform2D
+
+
 @export var body_sprite : Sprite2D
 @export var left_wheel : Sprite2D
 @export var right_wheel : Sprite2D
@@ -42,6 +45,9 @@ var ground_normal: Vector2 = Vector2.UP  # Track the current ground normal
 var is_active = false
 var fired_projectile = false
 
+var current_projectile: BaseProjectile  # The projectile we'll fire
+@export var projectile_config: ProjectileConfig  # Assigned in inspector or code
+
 func _ready() -> void:
 	if body_sprite:
 		adjust_collision_bounds(body_sprite.texture)
@@ -61,7 +67,23 @@ func _ready() -> void:
 	left_ray.enabled = true
 	right_ray.target_position = Vector2(0, ground_check_distance).rotated(-0.5)
 	right_ray.enabled = true
+	
+	# Create initial projectile for trajectory preview
+	create_new_projectile()
+	
 	GameStateManager.declare_player(self)
+
+func create_new_projectile():
+	# Clean up old projectile if it exists and hasn't been fired
+	if current_projectile and not current_projectile.fired:
+		current_projectile.queue_free()
+	
+	# Create new projectile with config (or default if none set)
+	current_projectile = BaseProjectile.new(projectile_config)
+	get_parent().call_deferred('add_child',current_projectile)
+	
+	# Connect the hit signal
+	current_projectile.projectile_hit.connect(_on_projectile_hit)
 
 func check_grounded_state(move_dir: int = 0, extend_rays: bool = false) -> void:
 	if extend_rays:
@@ -162,9 +184,18 @@ func _physics_process(delta: float):
 		if Input.is_action_just_pressed("fire") and is_active and !fired_projectile:
 			var turret_tip = global_position + turret_origin_offset.rotated(global_rotation) + Vector2(50, 0).rotated(global_rotation + deg_to_rad(aim_angle + aim_mod))
 			var firing_angle = global_rotation + deg_to_rad(aim_angle + aim_mod)
-			var p = Projectile.new(turret_tip, firing_angle, power)
-			p.projectile_hit.connect(_on_projectile_hit)
-			get_parent().add_child(p)
+			#var p = Projectile.new(turret_tip, firing_angle, power)
+			#p.projectile_hit.connect(_on_projectile_hit)
+			#get_parent().add_child(p)
+			#await get_tree().process_frame
+			#fired_projectile = true
+			# Fire the current projectile
+			current_projectile.fire(turret_tip, firing_angle, power)
+			GameStateManager.declare_projectile(current_projectile)
+			
+			# Create a new projectile for next shot
+			create_new_projectile()
+			
 			await get_tree().process_frame
 			fired_projectile = true
 	
@@ -208,6 +239,28 @@ func _physics_process(delta: float):
 	turret_shape.position = turret_origin_offset.lerp(turret_origin_offset + turret_length.rotated(deg_to_rad(aim_angle + aim_mod)), 0.5)
 	queue_redraw()
 
+#func update_trajectory_cache():
+	#if !show_trajectory or !perma_show_trajectory:
+		#return
+	#var current_aim = aim_angle + aim_mod
+	#
+	## Only recalculate if aim or position changed significantly
+	#if abs(current_aim - last_aim_angle) > 0.5 or global_position.distance_to(last_position) > 5.0 \
+	#or abs(power - last_power_level) > 0.5:
+		## Calculate turret tip in local space (exactly like drawing)
+		#var local_turret_tip = turret_origin_offset + turret_length.rotated(deg_to_rad(current_aim))
+		## Transform to world space
+		#var world_turret_tip = global_position + local_turret_tip.rotated(global_rotation)
+		## Firing angle is tank rotation + aim
+		#var firing_angle = global_rotation + deg_to_rad(current_aim)
+		#
+		#var terrain = get_parent().get_node_or_null("Terrain")
+		#cached_trajectory = Projectile.get_trajectory_arc(world_turret_tip, firing_angle, power, terrain, 15)
+		#
+		#last_aim_angle = current_aim
+		#last_position = global_position
+		#last_power_level = power
+
 func update_trajectory_cache():
 	if !show_trajectory or !perma_show_trajectory:
 		return
@@ -216,15 +269,16 @@ func update_trajectory_cache():
 	# Only recalculate if aim or position changed significantly
 	if abs(current_aim - last_aim_angle) > 0.5 or global_position.distance_to(last_position) > 5.0 \
 	or abs(power - last_power_level) > 0.5:
-		# Calculate turret tip in local space (exactly like drawing)
+		# Calculate turret tip (same as before)
 		var local_turret_tip = turret_origin_offset + turret_length.rotated(deg_to_rad(current_aim))
-		# Transform to world space
 		var world_turret_tip = global_position + local_turret_tip.rotated(global_rotation)
-		# Firing angle is tank rotation + aim
 		var firing_angle = global_rotation + deg_to_rad(current_aim)
 		
 		var terrain = get_parent().get_node_or_null("Terrain")
-		cached_trajectory = Projectile.get_trajectory_arc(world_turret_tip, firing_angle, power, terrain, 15)
+		
+		# Use the actual projectile's trajectory calculation
+		# This ensures preview matches what will actually fire
+		cached_trajectory = BaseProjectile.get_trajectory_arc(world_turret_tip, firing_angle, power, terrain, 15, current_projectile.config)
 		
 		last_aim_angle = current_aim
 		last_position = global_position

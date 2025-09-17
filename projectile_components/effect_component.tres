@@ -1,0 +1,6 @@
+[gd_resource type="Resource" script_class="EffectComponent" load_steps=2 format=3 uid="uid://b6plyyr233hfh"]
+
+[ext_resource type="Script" uid="uid://cc5ydd0qn5sns" path="res://projectile_components/effect.gd" id="1_55inb"]
+
+[resource]
+script = ExtResource("1_55inb")

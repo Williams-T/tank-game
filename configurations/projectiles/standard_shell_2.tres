@@ -1,0 +1,34 @@
+[gd_resource type="Resource" script_class="ProjectileConfig" load_steps=12 format=3 uid="uid://btig0jqytfjwd"]
+
+[ext_resource type="Script" uid="uid://cc5ydd0qn5sns" path="res://projectile_components/effect.gd" id="1_cfm2n"]
+[ext_resource type="Script" uid="uid://ba8xqhgv5s8fx" path="res://projectile_components/lifetime.gd" id="2_t37mr"]
+[ext_resource type="Script" uid="uid://cukelbtcw5jsa" path="res://projectile_components/movement.gd" id="3_gfcmq"]
+[ext_resource type="Script" uid="uid://bc7kpt7afjvd8" path="res://projectile_components/proj_config.gd" id="4_thju1"]
+[ext_resource type="Script" uid="uid://bb5aw5eadhlea" path="res://projectile_components/trigger.gd" id="5_ylyyh"]
+[ext_resource type="Script" uid="uid://dnw5x624c7xee" path="res://projectile_components/visual.gd" id="6_6oqer"]
+
+[sub_resource type="Resource" id="Resource_6hwue"]
+script = ExtResource("1_cfm2n")
+
+[sub_resource type="Resource" id="Resource_sq55h"]
+script = ExtResource("2_t37mr")
+
+[sub_resource type="Resource" id="Resource_3xtb0"]
+script = ExtResource("3_gfcmq")
+trajectory_type = 1
+physics_mode = 1
+
+[sub_resource type="Resource" id="Resource_shqq8"]
+script = ExtResource("5_ylyyh")
+
+[sub_resource type="Resource" id="Resource_r8qd0"]
+script = ExtResource("6_6oqer")
+
+[resource]
+script = ExtResource("4_thju1")
+config_name = "Standard Shell2"
+movement = SubResource("Resource_3xtb0")
+trigger = SubResource("Resource_shqq8")
+effect = SubResource("Resource_6hwue")
+visual = SubResource("Resource_r8qd0")
+lifetime = SubResource("Resource_sq55h")

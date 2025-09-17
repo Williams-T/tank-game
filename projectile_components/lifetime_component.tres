@@ -1,0 +1,6 @@
+[gd_resource type="Resource" script_class="LifetimeComponent" load_steps=2 format=3 uid="uid://b2xckwli4ed0e"]
+
+[ext_resource type="Script" uid="uid://ba8xqhgv5s8fx" path="res://projectile_components/lifetime.gd" id="1_xa7c5"]
+
+[resource]
+script = ExtResource("1_xa7c5")

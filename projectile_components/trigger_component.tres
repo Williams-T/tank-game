@@ -1,0 +1,6 @@
+[gd_resource type="Resource" script_class="TriggerComponent" load_steps=2 format=3 uid="uid://d281ggifr45bx"]
+
+[ext_resource type="Script" uid="uid://bb5aw5eadhlea" path="res://projectile_components/trigger.gd" id="1_gvl6t"]
+
+[resource]
+script = ExtResource("1_gvl6t")

@@ -1,0 +1,6 @@
+[gd_resource type="Resource" script_class="VisualComponent" load_steps=2 format=3 uid="uid://chduuwdyr56wq"]
+
+[ext_resource type="Script" uid="uid://dnw5x624c7xee" path="res://projectile_components/visual.gd" id="1_d7tne"]
+
+[resource]
+script = ExtResource("1_d7tne")
