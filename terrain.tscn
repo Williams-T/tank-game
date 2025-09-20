@@ -1,0 +1,23 @@
+[gd_scene load_steps=5 format=3 uid="uid://b0ksf7ftiwtkl"]
+
+[ext_resource type="Script" uid="uid://b6jec1tsrjda1" path="res://terrain.gd" id="1_0u6kl"]
+[ext_resource type="Texture2D" uid="uid://xq3x0fygna3o" path="res://ground_texture2.png" id="2_avahw"]
+
+[sub_resource type="FastNoiseLite" id="FastNoiseLite_yqaxe"]
+
+[sub_resource type="FastNoiseLite" id="FastNoiseLite_x24lp"]
+seed = 1
+
+[node name="Terrain" type="Node2D"]
+script = ExtResource("1_0u6kl")
+noise1 = SubResource("FastNoiseLite_yqaxe")
+noise2 = SubResource("FastNoiseLite_x24lp")
+
+[node name="Polygon2D" type="Polygon2D" parent="."]
+texture_filter = 1
+texture_repeat = 2
+texture = ExtResource("2_avahw")
+
+[node name="StaticBody2D" type="StaticBody2D" parent="Polygon2D"]
+
+[node name="CollisionPolygon2D" type="CollisionPolygon2D" parent="Polygon2D/StaticBody2D"]

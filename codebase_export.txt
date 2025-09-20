@@ -1,13 +1,677 @@
 TankGame
 
 ROOT:
-    codebase.gd
-    codebase_export.txt
-    ground_texture.png
-    icon.svg
-    level_template.tscn
-    project.godot
-    projectile.tscn
+	cam.tscn
+	codebase.gd
+	codebase_export.txt
+	ground_texture.png
+	ground_texture2.png
+	icon.svg
+	level_template.tscn
+	project.godot
+	projectile.tscn
+	tank.tscn
+	tenpxdots.png
+	terrain.tscn
+_______________
+(base_projectile.gd):
+extends Area2D
+class_name BaseProjectile
+
+signal projectile_hit(impact_position: Vector2, impact_angle: float, target_type: String, targets: Array)
+
+# Config and state
+var config: ProjectileConfig
+var fired: bool = false
+
+# Movement parameters (config-driven)
+var velocity: Vector2
+var _gravity: float
+
+# Visual trail (config-driven)
+var trail_points: Array[Vector2] = []
+var max_trail_length: int
+
+# Technical parameters
+var monitor_timer = 0.05
+var delta_bank = 0.0
+var lifetime = 5.0
+
+# Collision areas
+var explosion_area: Area2D
+var collision_shape: CollisionShape2D
+var explosion_shape: CollisionShape2D
+
+var bounces_remaining: int
+var bounce_cooldown: float = 0.0
+var bounce_cooldown_time: float = 0.01  # 0.1 seconds immunity after bounce
+
+func _init(projectile_config: ProjectileConfig = null) -> void:
+	monitoring = false
+	
+	# Use provided config or create default
+	if projectile_config:
+		config = projectile_config
+	else:
+		config = create_default_config()
+	
+	# Extract config values
+	_gravity = 980.0
+	max_trail_length = 20  # Could add to visual component later
+	bounces_remaining = config.movement.bounce_count
+	
+	# Start unfired
+	fired = false
+
+func create_default_config() -> ProjectileConfig:
+	var default_config = ProjectileConfig.new()
+	default_config.config_name = "Standard Shell"
+	
+	# Default movement (matches current behavior)
+	default_config.movement = MovementComponent.new()
+	default_config.movement.trajectory_type = MovementComponent.TrajectoryType.ARC
+	default_config.movement.physics_mode = MovementComponent.PhysicsMode.NORMAL_GRAVITY
+	default_config.movement.collision_response = MovementComponent.CollisionResponse.STOP
+	
+	# Default trigger
+	default_config.trigger = TriggerComponent.new()
+	default_config.trigger.activation_type = TriggerComponent.ActivationType.CONTACT
+	
+	# Default effect
+	default_config.effect = EffectComponent.new()
+	default_config.effect.effect_type = EffectComponent.EffectType.DAMAGE_CRATER
+	default_config.effect.crater_size = 50.0
+	
+	# Default visual
+	default_config.visual = VisualComponent.new()
+	default_config.visual.trail_color = Color.ORANGE
+	
+	# Default lifetime
+	default_config.lifetime = LifetimeComponent.new()
+	default_config.lifetime.duration_type = LifetimeComponent.DurationType.INSTANT
+	
+	return default_config
+
+func fire(origin: Vector2, angle: float, power: float) -> void:
+	# Set starting position
+	global_position = origin
+	
+	# Calculate initial velocity based on config
+	match config.movement.trajectory_type:
+		MovementComponent.TrajectoryType.ARC:
+			velocity.x = power * cos(angle)
+			velocity.y = power * sin(angle)
+		MovementComponent.TrajectoryType.STRAIGHT:
+			# Straight shots are faster and more direct
+			var straight_power = power * 2.0  # Double speed for laser-like feel
+			velocity = Vector2(cos(angle), sin(angle)) * straight_power
+	
+	# Activate projectile
+	fired = true
+
+func _ready() -> void:
+	# Set up collision shape
+	collision_shape = CollisionShape2D.new()
+	var circle_shape = CircleShape2D.new()
+	circle_shape.radius = 3.0
+	collision_shape.shape = circle_shape.duplicate()
+	add_child(collision_shape)
+	
+	explosion_area = Area2D.new()
+	add_child(explosion_area)
+	explosion_shape = CollisionShape2D.new()
+	circle_shape.radius = 30.0
+	explosion_shape.shape = circle_shape.duplicate()
+	explosion_area.add_child(explosion_shape)
+	
+	# Connect collision signal
+	body_entered.connect(_on_body_entered)
+	
+	# Only declare to GameStateManager when fired
+	if fired:
+		GameStateManager.declare_projectile(self)
+
+func _process(delta: float) -> void:
+	if not fired:
+		return
+		
+	if lifetime > delta_bank and position.y > -2000.0:
+		delta_bank += delta
+		if !monitoring and delta_bank > monitor_timer:
+			monitoring = true
+	else:
+		GameStateManager.remove_projectile(self)
+		projectile_hit.emit(global_position, 0.0, "", [])
+		queue_free()
+	if bounce_cooldown > 0:
+		bounce_cooldown -= delta
+		monitoring = false  # Disable collision detection during cooldown
+	else:
+		monitoring = true
+	# Apply physics based on config
+	match config.movement.physics_mode:
+		MovementComponent.PhysicsMode.NORMAL_GRAVITY:
+			velocity.y += _gravity * delta
+		MovementComponent.PhysicsMode.REVERSE_GRAVITY:
+			velocity.y -= _gravity * delta
+		# NO_GRAVITY does nothing
+	
+	global_position += velocity * delta
+	
+	# Add to trail
+	trail_points.append(global_position)
+	if trail_points.size() > max_trail_length:
+		trail_points.pop_front()
+	
+	queue_redraw()
+
+func _on_body_entered(body: Node) -> void:
+	# Handle collision based on config
+	match config.movement.collision_response:
+		MovementComponent.CollisionResponse.STOP:
+			_handle_impact(body)
+		MovementComponent.CollisionResponse.BOUNCE:
+			_handle_bounce(body)
+		MovementComponent.CollisionResponse.PASS_THROUGH:
+			_handle_pass_through(body)
+
+func _handle_impact(body: Node) -> void:
+	var bodies = explosion_area.get_overlapping_bodies()
+	var impact_angle = atan2(velocity.y, velocity.x)
+	
+	var target_type = "terrain"
+	if body.name.contains("Tank"):
+		target_type = "tank"
+	if bodies.size() > 1:
+		target_type = "multiple"
+	
+	projectile_hit.emit(global_position, impact_angle, target_type, bodies)
+	GameStateManager.remove_projectile(self)
+	queue_free()
+
+func _handle_bounce(body: Node) -> void:
+	# Get collision normal for realistic bounce
+	var collision_normal = Vector2.UP  # default upward
+	
+	# Try to get actual surface normal
+	var world = get_world_2d()
+	if world:
+		var space_state = world.direct_space_state
+		# Cast backwards along velocity to find collision point
+		var ray_start = global_position - velocity.normalized() * 20
+		var ray_end = global_position
+		var query = PhysicsRayQueryParameters2D.create(ray_start, ray_end)
+		query.collision_mask = 1
+		var result = space_state.intersect_ray(query)
+		if result:
+			collision_normal = result.normal
+	
+	# Reflect velocity using Godot's built-in bounce
+	velocity = velocity.bounce(collision_normal)
+	
+	# Add some energy loss for realism
+	velocity *= 0.85  # Lose 15% speed per bounce
+	
+	# Decrement bounce count
+	bounces_remaining -= 1
+	bounce_cooldown = bounce_cooldown_time
+	print("Bounced! Remaining bounces: ", bounces_remaining)
+	
+	# If no bounces left, explode normally
+	if bounces_remaining <= 0:
+		_handle_impact(body)
+	else:
+		# Move slightly away from collision to prevent immediate re-collision
+		global_position += collision_normal * 5.0
+
+func _handle_pass_through(body: Node) -> void:
+	# Implement pass-through logic here
+	pass
+
+func _draw() -> void:
+	if not fired:
+		return
+		
+	# Draw projectile
+	draw_circle(Vector2.ZERO, 5.0, Color.YELLOW)
+	
+	# Draw trail based on config
+	if trail_points.size() > 1:
+		for i in range(trail_points.size() - 1):
+			var alpha = float(i) / float(trail_points.size())
+			var color = config.visual.trail_color
+			color.a = alpha * 0.5
+			var local_start = to_local(trail_points[i])
+			var local_end = to_local(trail_points[i + 1])
+			draw_line(local_start, local_end, color, 2.0)
+
+# Static method for trajectory preview (unchanged)
+#static func get_trajectory_arc(origin: Vector2, angle: float, power: float, terrain: Node = null, points_count: int = 50) -> Array[Vector2]:
+	#var trajectory_points: Array[Vector2] = []
+	#
+	#var velocity_x = power * cos(angle)
+	#var velocity_y = power * sin(angle)
+	#var _grav = 980.0
+	#
+	#var impact_time = calculate_impact_time_static(origin, velocity_x, velocity_y, _grav, terrain)
+	#
+	#for i in range(points_count + 1):
+		#var t = (float(i) / float(points_count)) * impact_time
+		#var x = origin.x + velocity_x * t
+		#var y = origin.y + velocity_y * t + 0.5 * _grav * t * t
+		#var point = Vector2(x, y)
+		#trajectory_points.append(point)
+	#
+	#return trajectory_points
+
+#static func get_trajectory_arc(origin: Vector2, angle: float, power: float, terrain: Node = null, points_count: int = 50, projectile_config: ProjectileConfig = null) -> Array[Vector2]:
+	#var trajectory_points: Array[Vector2] = []
+	#
+	## Handle different trajectory types
+	#if projectile_config and projectile_config.movement.trajectory_type == MovementComponent.TrajectoryType.STRAIGHT:
+		#return get_straight_trajectory(origin, angle, power * 2.0, terrain, points_count, projectile_config)
+	#else:
+		## Existing arc calculation
+		#var velocity_x = power * cos(angle)
+		#var velocity_y = power * sin(angle)
+		#var _grav = 980.0
+		#
+		#var impact_time = calculate_impact_time_static(origin, velocity_x, velocity_y, _grav, terrain)
+		#
+		#for i in range(points_count + 1):
+			#var t = (float(i) / float(points_count)) * impact_time
+			#var x = origin.x + velocity_x * t
+			#var y = origin.y + velocity_y * t + 0.5 * _grav * t * t
+			#trajectory_points.append(Vector2(x, y))
+		#
+		#return trajectory_points
+
+static func get_trajectory_arc(origin: Vector2, angle: float, power: float, terrain: Node = null, points_count: int = 50, projectile_config: ProjectileConfig = null) -> Array[Vector2]:
+	# Handle bouncing projectiles specially
+	if projectile_config and projectile_config.movement.collision_response == MovementComponent.CollisionResponse.BOUNCE:
+		return get_bouncing_trajectory(origin, angle, power, terrain, points_count, projectile_config)
+	elif projectile_config and projectile_config.movement.trajectory_type == MovementComponent.TrajectoryType.STRAIGHT:
+		return get_straight_trajectory(origin, angle, power, terrain, points_count, projectile_config)
+	else:
+		# Existing arc calculation (unchanged)
+		var trajectory_points: Array[Vector2] = []
+		var velocity_x = power * cos(angle)
+		var velocity_y = power * sin(angle)
+		var _grav = 980.0
+		
+		var impact_time = calculate_impact_time_static(origin, velocity_x, velocity_y, _grav, terrain)
+		
+		for i in range(points_count + 1):
+			var t = (float(i) / float(points_count)) * impact_time
+			var x = origin.x + velocity_x * t
+			var y = origin.y + velocity_y * t + 0.5 * _grav * t * t
+			trajectory_points.append(Vector2(x, y))
+		
+		return trajectory_points
+
+static func get_bouncing_trajectory(origin: Vector2, angle: float, power: float, terrain: Node = null, points_count: int = 50, projectile_config: ProjectileConfig = null) -> Array[Vector2]:
+	var all_points: Array[Vector2] = []
+	
+	var velocity_x = power * cos(angle)
+	var velocity_y = power * sin(angle)
+	var _grav = 980.0
+	
+	# Apply trajectory type
+	if projectile_config.movement.trajectory_type == MovementComponent.TrajectoryType.STRAIGHT:
+		velocity_x *= 2.0
+		velocity_y *= 2.0
+	
+	var impact_time = calculate_impact_time_static(origin, velocity_x, velocity_y, _grav, terrain)
+	
+	# Generate points for initial trajectory (use most of point budget)
+	var main_points = int(points_count * 0.8)  # 80% of points for main arc
+	for i in range(main_points):
+		var t = (float(i) / float(main_points - 1)) * impact_time
+		var x = origin.x + velocity_x * t
+		var y = origin.y + velocity_y * t + 0.5 * _grav * t * t
+		all_points.append(Vector2(x, y))
+	
+	var world = terrain.get_world_2d() if terrain else null
+	var space_state = world.direct_space_state if world and terrain else null
+	
+	if space_state:
+		# Walk backwards from calculated impact to find exact circle collision
+		var collision_radius = 3.0
+		var search_steps = 20
+		var collision_pos = all_points[-1]
+		var collision_normal = Vector2.UP
+		
+		# Find exact collision position
+		for step in range(search_steps):
+			var t = impact_time - (float(step) / float(search_steps)) * impact_time * 0.1
+			var test_pos = Vector2(
+				origin.x + velocity_x * t,
+				origin.y + velocity_y * t + 0.5 * _grav * t * t
+			)
+			
+			var query = PhysicsShapeQueryParameters2D.new()
+			query.transform = Transform2D(0, test_pos)
+			query.collision_mask = 1
+			var shape = CircleShape2D.new()
+			shape.radius = collision_radius
+			query.shape = shape
+			
+			var result = space_state.intersect_shape(query)
+			if result.size() > 0:
+				collision_pos = test_pos
+				
+				# Get collision normal - cast FROM the collision point outward to find surface
+				var impact_velocity = Vector2(velocity_x, velocity_y + _grav * t)
+				
+				# Cast multiple rays to find the best surface normal
+				var best_normal = Vector2.UP
+				var normal_found = false
+				
+				# Try rays in different directions to find surface
+				for angle_offset in [-45, -30, -15, 0, 15, 30, 45]:
+					var ray_angle = impact_velocity.angle() + deg_to_rad(180 + angle_offset)
+					var ray_direction = Vector2(cos(ray_angle), sin(ray_angle))
+					var ray_start = test_pos
+					var ray_end = test_pos + ray_direction * 30
+					
+					var ray_query = PhysicsRayQueryParameters2D.create(ray_start, ray_end)
+					ray_query.collision_mask = 1
+					var ray_result = space_state.intersect_ray(ray_query)
+					if ray_result:
+						best_normal = ray_result.normal
+						normal_found = true
+						break
+				
+				collision_normal = best_normal
+				break
+		
+		# Update last point to exact collision position
+		all_points[-1] = collision_pos
+		
+		var t_collision = impact_time
+		var impact_velocity = Vector2(velocity_x, velocity_y + _grav * t_collision)
+		var bounce_velocity = impact_velocity.bounce(collision_normal) * 0.85
+		var bounce_start = collision_pos + collision_normal * 5.0
+		
+		print("Impact velocity: ", impact_velocity)
+		print("Collision normal: ", collision_normal) 
+		print("Bounce velocity: ", bounce_velocity)
+		
+		var bounce_points = points_count - main_points
+		var bounce_distance = 200.0
+		
+		for i in range(bounce_points):
+			var t = float(i + 1) / float(bounce_points)
+			var indicator_pos = bounce_start + bounce_velocity.normalized() * bounce_distance * t
+			all_points.append(indicator_pos)
+	return all_points
+
+static func get_straight_trajectory(origin: Vector2, angle: float, power: float, terrain: Node = null, points_count: int = 50, projectile_config: ProjectileConfig = null) -> Array[Vector2]:
+	var trajectory_points: Array[Vector2] = []
+	var velocity = Vector2(cos(angle), sin(angle)) * power
+	var _grav = 980.0
+	
+	# Check if gravity applies
+	var applies_gravity = projectile_config == null or projectile_config.movement.physics_mode != MovementComponent.PhysicsMode.NO_GRAVITY
+	
+	if applies_gravity:
+		# Still use physics for straight shots with gravity
+		var impact_time = calculate_impact_time_static(origin, velocity.x, velocity.y, _grav, terrain)
+		for i in range(points_count + 1):
+			var t = (float(i) / float(points_count)) * impact_time
+			var x = origin.x + velocity.x * t
+			var y = origin.y + velocity.y * t + 0.5 * _grav * t * t
+			trajectory_points.append(Vector2(x, y))
+	else:
+		# Pure straight line - no gravity
+		var max_distance = 2000.0  # Max range for straight shots
+		for i in range(points_count + 1):
+			var t = float(i) / float(points_count)
+			var point = origin + velocity.normalized() * (max_distance * t)
+			trajectory_points.append(point)
+			
+			# Check for terrain collision
+			if terrain and i > 0:
+				var world = terrain.get_world_2d()
+				if world:
+					var space_state = world.direct_space_state
+					var query = PhysicsRayQueryParameters2D.create(trajectory_points[i-1], point)
+					query.collision_mask = 1
+					var result = space_state.intersect_ray(query)
+					if result:
+						trajectory_points[i] = result.position
+						break
+	
+	return trajectory_points
+
+static func calculate_impact_time_static(origin: Vector2, velocity_x: float, velocity_y: float, _grav: float, terrain: Node = null) -> float:
+	# [Keep existing implementation]
+	if not terrain:
+		var a = 0.5 * _grav
+		var b = velocity_y
+		var c = origin.y - 1200.0
+		var discriminant = b * b - 4 * a * c
+		if discriminant < 0:
+			return 20.0
+		var t1 = (-b + sqrt(discriminant)) / (2 * a)
+		var t2 = (-b - sqrt(discriminant)) / (2 * a)
+		if t1 > 0 and t2 > 0:
+			return min(t1, t2)
+		elif t1 > 0:
+			return t1
+		elif t2 > 0:
+			return t2
+		else:
+			return 20.0
+	
+	var world = terrain.get_world_2d()
+	if not world:
+		return 20.0
+	
+	var space_state = world.direct_space_state
+	var sample_interval = 0.1
+	var max_time = 20.0
+	var last_pos = origin
+	
+	for t in range(1, int(max_time / sample_interval)):
+		var time = t * sample_interval
+		var x = origin.x + velocity_x * time
+		var y = origin.y + velocity_y * time + 0.5 * _grav * time * time
+		var current_pos = Vector2(x, y)
+		
+		var query = PhysicsRayQueryParameters2D.create(last_pos, current_pos)
+		query.collision_mask = 1
+		var result = space_state.intersect_ray(query)
+		
+		if result:
+			var hit_distance = last_pos.distance_to(result.position)
+			var segment_distance = last_pos.distance_to(current_pos)
+			var time_offset = (hit_distance / segment_distance) * sample_interval
+			return (t - 1) * sample_interval + time_offset
+		
+		last_pos = current_pos
+	
+	return max_time
+
+_______________
+_______________
+(cam.gd):
+extends Camera2D
+
+@export_range(3.0, 100.0) var move_speed = 3.0
+@export_range(0.5, 2.0) var zoom_speed = 1.0
+var target_zoom : float = 1.0
+var current_zoom : float = 1.0
+var target_pos := Vector2.ZERO
+var current_pos := Vector2.ZERO
+var temp_vector : Vector2 = Vector2.ZERO
+var shaky = true
+var targets : Array[Node] = []
+var split := false
+@onready var split_layer := $SplitLayer
+@onready var left_cam := $SplitLayer/Panel/HBoxContainer/LeftContainer/SubViewport/Camera2D
+@onready var right_cam := $SplitLayer/Panel/HBoxContainer/RightContainer/SubViewport/Camera2D
+
+var left_cam_path
+var right_cam_path
+
+func _enter_tree() -> void:
+	temp_vector.x = current_zoom
+	temp_vector.y = current_zoom
+	current_pos = position
+	zoom = temp_vector
+	enabled = true
+	make_current()
+
+func _set_zoom(value = 1.0):
+	target_zoom = value
+
+func _physics_process(delta: float) -> void:
+	if !split:
+		if split_layer.visible != split:
+			toggle_split(split)
+		if abs(current_zoom - target_zoom) > 0.1:
+			if temp_vector.x != target_zoom or temp_vector.y != target_zoom:
+				temp_vector.x = target_zoom
+				temp_vector.y = target_zoom
+			zoom = zoom.lerp(temp_vector, delta * zoom_speed)
+			current_zoom = zoom.x
+		var targets_size = targets.size()
+		if targets_size > 0:
+			if targets_size == 1:
+				if target_pos != targets[0].position:
+					target_pos = targets[0].position
+				if target_zoom != 2.0:
+					target_zoom = 2.0
+			else:
+				target_pos = determine_midpoint(targets)
+				target_zoom = determine_zoom(targets)
+		if current_pos.distance_to(target_pos)>0.1:
+			#if randf() > 0.95:
+				#target_pos += Vector2(randf_range(-3.0, 3.0), randf_range(-3.0, 3.0))
+			position = position.lerp(target_pos, delta * move_speed)
+			current_pos = position
+	else:
+		if split_layer.visible != split:
+			toggle_split(split)
+
+func toggle_split(val:bool):
+	if (left_cam.get_parent() as SubViewport).world_2d != get_world_2d():
+		var world = get_world_2d()
+		left_cam.get_parent().world_2d = world
+		right_cam.get_parent().world_2d = world
+	if val == true:
+		if left_cam_path and right_cam_path:
+			split_layer.visible = val
+		else:
+			if targets.size() > 0:
+				for i in targets:
+					if i is Tank:
+						if !left_cam_path:
+							left_cam_path = left_cam.get_path()
+							i.remote_transform.remote_path = left_cam_path
+						elif !right_cam_path:
+							right_cam_path = right_cam.get_path()
+							i.remote_transform.remote_path = right_cam_path
+	else:
+		split_layer.visible = val
+
+func set_target(player : Tank):
+	if !left_cam_path:
+		pass
+	elif !right_cam_path:
+		pass
+	else:
+		pass
+func determine_midpoint(locations : Array):
+	var size : float = locations.size()
+	var total_lats : float = 0.0
+	var total_longs : float = 0.0
+	for item in locations:
+		total_lats += item.position.x
+		total_longs += item.position.y
+	temp_vector.x = total_lats / size
+	temp_vector.y = total_longs / size
+	if shaky and randf()>0.9:
+		temp_vector += Vector2(randf_range(-3.0, 3.0), randf_range(-3.0, 3.0))
+	return temp_vector
+
+func determine_zoom(locations: Array) -> float:
+	# Get viewport dimensions
+	var viewport_size = get_viewport_rect().size
+	
+	# Find the bounding box of all targets
+	var min_x = INF
+	var max_x = -INF
+	var min_y = INF
+	var max_y = -INF
+	
+	for target in locations:
+		var pos = target.position
+		min_x = min(min_x, pos.x)
+		max_x = max(max_x, pos.x)
+		min_y = min(min_y, pos.y)
+		max_y = max(max_y, pos.y)
+	
+	# Calculate required view area with padding
+	var padding = 300.0  # Adjust for comfortable framing
+	var required_width = (max_x - min_x) + padding * 2
+	var required_height = (max_y - min_y) + padding * 2
+	
+	# Calculate zoom needed for each dimension
+	# Lower zoom values = zoomed out (see more)
+	var zoom_for_width = viewport_size.x / required_width
+	var zoom_for_height = viewport_size.y / required_height
+	
+	# Use the smaller zoom to ensure everything fits
+	var final_zoom = min(zoom_for_width, zoom_for_height)
+	
+	# Clamp to reasonable limits
+	return clamp(final_zoom, 0.05, 3.0)  # Adjust min/max as needed
+
+_______________
+_______________
+(game_state_manager.gd):
+extends Node
+
+var players : Array[Tank] = []
+var player_distance := 0.0
+var current_player = 0
+enum game_mode {
+	
+}
+
+func start_game():
+	players[current_player].is_active = true
+
+func end_turn(player : Tank):
+	player.is_active = false
+	current_player = wrapi(current_player + 1, 0, players.size())
+	players[current_player].is_active = true
+	players[current_player].fired_projectile = false
+
+func declare_player(player : Tank):
+	if !players.has(player):
+		players.append(player)
+		Cam.targets.append(player)
+	if players.size() == 2:
+		start_game()
+func declare_projectile(projectile):
+	Cam.targets.append(projectile)
+
+func remove_projectile(projectile):
+	Cam.targets.erase(projectile)
+
+func _process(delta: float) -> void:
+	player_distance = players[0].global_position.distance_to(players[1].global_position)
+	if player_distance > 2000.0:
+		if !Cam.split:
+			Cam.split = true
+	else:
+		if Cam.split:
+			Cam.split = false
+
+_______________
 _______________
 (level_template.gd):
 extends Node2D
@@ -21,75 +685,60 @@ func _ready() -> void:
 _______________
 _______________
 (projectile.gd):
-extends Node2D
+extends Area2D
 class_name Projectile
 
-signal projectile_hit(impact_position: Vector2, impact_angle: float, target_type: String, target: Node)
+signal projectile_hit(impact_position: Vector2, impact_angle: float, target_type: String, targets: Array)
 
-# Projectile parameters
-var origin: Vector2
-var launch_angle: float
-var initial_velocity: float
-var gravity: float = 980.0
+# Movement parameters
+var velocity: Vector2
+var _gravity: float = 980.0
 
-# Trajectory calculation
-var velocity_x: float
-var velocity_y: float
-var flight_time: float = 0.0
-var impact_time: float = -1.0
-var impact_position: Vector2
-var impact_angle: float
-
-# Visual
+# Visual trail
 var trail_points: Array[Vector2] = []
 var max_trail_length: int = 20
 
-# Static method for getting trajectory arc
+var monitor_timer = 0.05
+var delta_bank = 0.0
+
+var explosion_area : Area2D
+var collision_shape : CollisionShape2D
+var explosion_shape : CollisionShape2D
+
+# Static method for getting trajectory arc (for preview)
 static func get_trajectory_arc(origin: Vector2, angle: float, power: float, terrain: Node = null, points_count: int = 50) -> Array[Vector2]:
 	var trajectory_points: Array[Vector2] = []
 	
 	# Calculate velocity components
 	var velocity_x = power * cos(angle)
 	var velocity_y = power * sin(angle)
-	var gravity = 980.0
+	var _grav = 980.0
 	
-	# Calculate impact time
-	var impact_time = calculate_impact_time_static(origin, velocity_x, velocity_y, gravity, terrain)
+	# Calculate impact time using raycast method
+	var impact_time = calculate_impact_time_static(origin, velocity_x, velocity_y, _grav, terrain)
 	
 	# Generate points along the arc
 	for i in range(points_count + 1):
 		var t = (float(i) / float(points_count)) * impact_time
 		var x = origin.x + velocity_x * t
-		var y = origin.y + velocity_y * t + 0.5 * gravity * t * t
+		var y = origin.y + velocity_y * t + 0.5 * _grav * t * t
 		var point = Vector2(x, y)
-		
-		# Check if we've hit terrain early
-		if terrain:
-			var terrain_height = get_terrain_height_at_x_static(point.x, terrain)
-			if point.y >= terrain_height:
-				# Add the impact point and stop
-				trajectory_points.append(Vector2(point.x, terrain_height))
-				break
-		
 		trajectory_points.append(point)
 	
 	return trajectory_points
 
-# Static method for calculating impact time
-static func calculate_impact_time_static(origin: Vector2, velocity_x: float, velocity_y: float, gravity: float, terrain: Node = null) -> float:
+# Static method for calculating impact time using raycasts
+static func calculate_impact_time_static(origin: Vector2, velocity_x: float, velocity_y: float, _grav: float, terrain: Node = null) -> float:
 	if not terrain:
 		# Fallback: flat ground at y=1200
-		var a = 0.5 * gravity
+		var a = 0.5 * _grav
 		var b = velocity_y
 		var c = origin.y - 1200.0
-		
 		var discriminant = b * b - 4 * a * c
 		if discriminant < 0:
-			return 20.0  # Default max time
-		
+			return 20.0
 		var t1 = (-b + sqrt(discriminant)) / (2 * a)
 		var t2 = (-b - sqrt(discriminant)) / (2 * a)
-		
 		if t1 > 0 and t2 > 0:
 			return min(t1, t2)
 		elif t1 > 0:
@@ -99,216 +748,100 @@ static func calculate_impact_time_static(origin: Vector2, velocity_x: float, vel
 		else:
 			return 20.0
 	
-	# Sample trajectory to find terrain intersection
+	# Use physics raycast for accurate collision detection
+	var world = terrain.get_world_2d()
+	if not world:
+		return 20.0
+	
+	var space_state = world.direct_space_state
 	var sample_interval = 0.1
 	var max_time = 20.0
+	var last_pos = origin
 	
-	for t in range(0, int(max_time / sample_interval)):
+	for t in range(1, int(max_time / sample_interval)):
 		var time = t * sample_interval
 		var x = origin.x + velocity_x * time
-		var y = origin.y + velocity_y * time + 0.5 * gravity * time * time
-		var test_position = Vector2(x, y)
+		var y = origin.y + velocity_y * time + 0.5 * _grav * time * time
+		var current_pos = Vector2(x, y)
 		
-		var terrain_height = get_terrain_height_at_x_static(test_position.x, terrain)
-		if test_position.y >= terrain_height:
-			# Refine with binary search
-			var prev_time = max(0, time - sample_interval)
-			return binary_search_impact_time_static(prev_time, time, origin, velocity_x, velocity_y, gravity, terrain)
+		# Cast ray from last position to current position
+		var query = PhysicsRayQueryParameters2D.create(last_pos, current_pos)
+		query.collision_mask = 1  # Adjust if terrain is on different layer
+		var result = space_state.intersect_ray(query)
+		
+		if result:
+			# Hit terrain! Calculate precise time
+			var hit_distance = last_pos.distance_to(result.position)
+			var segment_distance = last_pos.distance_to(current_pos)
+			var time_offset = (hit_distance / segment_distance) * sample_interval
+			return (t - 1) * sample_interval + time_offset
+		
+		last_pos = current_pos
 	
 	return max_time
 
-# Static binary search for precise impact time
-static func binary_search_impact_time_static(start_time: float, end_time: float, origin: Vector2, velocity_x: float, velocity_y: float, gravity: float, terrain: Node) -> float:
-	var precision = 0.001
-	
-	while end_time - start_time > precision:
-		var mid_time = (start_time + end_time) * 0.5
-		var x = origin.x + velocity_x * mid_time
-		var y = origin.y + velocity_y * mid_time + 0.5 * gravity * mid_time * mid_time
-		var mid_position = Vector2(x, y)
-		var terrain_height = get_terrain_height_at_x_static(mid_position.x, terrain)
-		
-		if mid_position.y >= terrain_height:
-			end_time = mid_time
-		else:
-			start_time = mid_time
-	
-	return (start_time + end_time) * 0.5
-
-# Static method for terrain height lookup
-static func get_terrain_height_at_x_static(x_pos: float, terrain: Node) -> float:
-	if not terrain or not terrain.poly.has_method("get_polygon"):
-		return 1200.0
-	
-	var polygon = terrain.poly.polygon
-	if polygon.size() < 2:
-		return 1200.0
-	
-	for i in range(polygon.size() - 1):
-		var p1 = polygon[i]
-		var p2 = polygon[i + 1]
-		
-		if x_pos >= p1.x and x_pos <= p2.x:
-			var ratio = (x_pos - p1.x) / (p2.x - p1.x)
-			return lerp(p1.y, p2.y, ratio)
-	
-	return 1200.0
-
 func _init(_origin: Vector2, _angle: float, _power: float) -> void:
-	origin = _origin
-	launch_angle = _angle
-	initial_velocity = _power
+	monitoring = false
+	# Set starting position
+	global_position = _origin
 	
 	# Calculate initial velocity components
-	velocity_x = initial_velocity * cos(launch_angle)
-	velocity_y = initial_velocity * sin(launch_angle)  # Up is negative Y in Godot
-	
-	# Set starting position
-	global_position = origin
-	
+	velocity.x = _power * cos(_angle)
+	velocity.y = _power * sin(_angle)
+
 func _ready() -> void:
-	calculate_impact()
-
-func calculate_impact() -> void:
-	var terrain = get_terrain_node()
-	if not terrain:
-		# Fallback: calculate impact with flat ground at y=1200
-		impact_time = calculate_flat_ground_impact(1200.0)
-		impact_position = get_position_at_time(impact_time)
-		impact_angle = get_velocity_angle_at_time(impact_time)
-		return
+	# Set up collision shape
+	collision_shape = CollisionShape2D.new()
+	var circle_shape = CircleShape2D.new()
+	circle_shape.radius = 3.0
+	collision_shape.shape = circle_shape.duplicate()
+	add_child(collision_shape)
 	
-	# Sample trajectory points to find terrain intersection
-	var sample_interval = 0.1  # Check every 0.1 seconds
-	var max_time = 20.0  # Maximum flight time to check
+	explosion_area = Area2D.new()
+	add_child(explosion_area)
+	explosion_shape = CollisionShape2D.new()
+	circle_shape.radius = 30.0
+	explosion_shape.shape = circle_shape.duplicate()
+	explosion_area.add_child(explosion_shape)
 	
-	for t in range(0, int(max_time / sample_interval)):
-		var time = t * sample_interval
-		var test_position = get_position_at_time(time)
-		
-		# Check if we hit the terrain
-		var terrain_height = get_terrain_height_at_x(test_position.x, terrain)
-		if test_position.y >= terrain_height:
-			# We hit! Refine the exact impact time with binary search
-			var prev_time = max(0, time - sample_interval)
-			impact_time = binary_search_impact_time(prev_time, time, terrain)
-			impact_position = get_position_at_time(impact_time)
-			impact_angle = get_velocity_angle_at_time(impact_time)
-			return
 	
-	# No terrain hit found, use max time
-	impact_time = max_time
-	impact_position = get_position_at_time(impact_time)
-	impact_angle = get_velocity_angle_at_time(impact_time)
-
-func binary_search_impact_time(start_time: float, end_time: float, terrain: Node) -> float:
-	var precision = 0.001  # 1ms precision
-	
-	while end_time - start_time > precision:
-		var mid_time = (start_time + end_time) * 0.5
-		var mid_position = get_position_at_time(mid_time)
-		var terrain_height = get_terrain_height_at_x(mid_position.x, terrain)
-		
-		if mid_position.y >= terrain_height:
-			end_time = mid_time  # Hit happened before mid_time
-		else:
-			start_time = mid_time  # Hit happened after mid_time
-	
-	return (start_time + end_time) * 0.5
-
-func get_position_at_time(t: float) -> Vector2:
-	var x = origin.x + velocity_x * t
-	var y = origin.y + velocity_y * t + 0.5 * gravity * t * t
-	return Vector2(x, y)
-
-func get_velocity_angle_at_time(t: float) -> float:
-	var vx = velocity_x
-	var vy = velocity_y + gravity * t
-	return atan2(vy, vx)
-
-func calculate_flat_ground_impact(ground_y: float) -> float:
-	# Solve: origin.y + velocity_y * t + 0.5 * gravity * t^2 = ground_y
-	# 0.5 * gravity * t^2 + velocity_y * t + (origin.y - ground_y) = 0
-	var a = 0.5 * gravity
-	var b = velocity_y
-	var c = origin.y - ground_y
-	
-	var discriminant = b * b - 4 * a * c
-	if discriminant < 0:
-		return 0.0
-	
-	var t1 = (-b + sqrt(discriminant)) / (2 * a)
-	var t2 = (-b - sqrt(discriminant)) / (2 * a)
-	
-	# Return the positive time that's greater than 0
-	if t1 > 0 and t2 > 0:
-		return min(t1, t2)
-	elif t1 > 0:
-		return t1
-	elif t2 > 0:
-		return t2
-	else:
-		return 0.0
-
-func get_terrain_node() -> Node:
-	# Find the terrain node in the scene
-	var parent = get_parent()
-	if parent:
-		return parent.get_node_or_null("Terrain")
-	return null
-
-func get_terrain_height_at_x(x_pos: float, terrain: Node) -> float:
-	if not terrain or not terrain.poly.has_method("get_polygon"):
-		return 1200.0  # Fallback ground level
-	
-	var polygon = terrain.poly.polygon
-	if polygon.size() < 2:
-		return 1200.0
-	
-	# Find the two points that bracket our x position
-	for i in range(polygon.size() - 1):
-		var p1 = polygon[i]
-		var p2 = polygon[i + 1]
-		
-		if x_pos >= p1.x and x_pos <= p2.x:
-			# Interpolate height between these two points
-			var ratio = (x_pos - p1.x) / (p2.x - p1.x)
-			return lerp(p1.y, p2.y, ratio)
-	
-	# If outside terrain bounds, return a default
-	return 1200.0
+	# Connect collision signal
+	body_entered.connect(_on_body_entered)
+	GameStateManager.declare_projectile(self)
 
 func _process(delta: float) -> void:
-	if impact_time < 0:
-		return  # Impact not calculated yet
+	if !monitoring:
+		delta_bank += delta
+		if delta_bank > monitor_timer:
+			monitoring = true
+	# Simple ballistic physics
+	velocity.y += _gravity * delta
+	global_position += velocity * delta
 	
-	flight_time += delta
-	
-	if flight_time >= impact_time:
-		# Impact!
-		global_position = impact_position
-		emit_impact_signal()
-		queue_free()
-	else:
-		# Update position along trajectory
-		global_position = get_position_at_time(flight_time)
-		
-		# Add to trail
-		trail_points.append(global_position)
-		if trail_points.size() > max_trail_length:
-			trail_points.pop_front()
+	# Add to trail
+	trail_points.append(global_position)
+	if trail_points.size() > max_trail_length:
+		trail_points.pop_front()
 	
 	queue_redraw()
 
-func emit_impact_signal() -> void:
-	# Check what we hit
+func _on_body_entered(body: Node) -> void:
+	var bodies = explosion_area.get_overlapping_bodies()
+	# Calculate impact angle from current velocity
+	var impact_angle = atan2(velocity.y, velocity.x)
+	
+	# Determine what we hit
 	var target_type = "terrain"
-	var target: Node = get_terrain_node()
+	if body.name.contains("Tank"):
+		target_type = "tank"
 	
-	# You can expand this to check for tank hits
-	# by casting a small area around impact_position
-	
-	projectile_hit.emit(impact_position, impact_angle, target_type, target)
+	# Emit hit signal
+	if bodies.size() > 1:
+		target_type = "multiple"
+	projectile_hit.emit(global_position, impact_angle, target_type, bodies)
+	GameStateManager.remove_projectile(self)
+	# Clean up
+	queue_free()
 
 func _draw() -> void:
 	# Draw projectile
@@ -333,25 +866,28 @@ class_name Tank
 # Movement settings
 @export var move_speed : float = 300.0
 @export var gravity : float = 980.0
-@export var rotation_speed : float = 2.0  # How fast tank aligns to terrain
+@export var rotation_speed : float = 3.0  # How fast tank aligns to terrain
 
 @onready var right_ray  : RayCast2D = $RayCastRight
 @onready var center_ray : RayCast2D =  $RayCastCenter
 @onready var left_ray  : RayCast2D = $RayCastLeft
 
 @onready var collision_shape : CollisionShape2D = $CollisionShape2D
+@onready var turret_shape : CollisionShape2D = $turret_shape
+@onready var remote_transform : RemoteTransform2D = $RemoteTransform2D
+
 
 @export var body_sprite : Sprite2D
 @export var left_wheel : Sprite2D
 @export var right_wheel : Sprite2D
 
-var rotation_divisor = 300.0
+#var rotation_divisor = 300.0
 var aim_angle = -90.0
 var aim_mod = 0.0
 
 var power = 500.0
 
-var projectile_counter = 0
+#var projectile_counter = 0
 var turret_origin_offset = Vector2(0, -10)
 var turret_length = Vector2(50,0)
 
@@ -360,106 +896,251 @@ var last_aim_angle: float = -999.0
 var last_position: Vector2 = Vector2(-999, -999)
 var last_power_level : float = -999.0
 var show_trajectory: bool = false
-var perma_show_trajectory : bool = false
+var perma_show_trajectory : bool = true
+
+var is_grounded: bool = false
+var ground_check_distance: float = 30.0  # Will be set in _ready
+var stick_angle_threshold: float = 190.0  # Degrees from upright
+var ground_normal: Vector2 = Vector2.UP  # Track the current ground normal
+
+# Game State Variables:
+var is_active = false
+var fired_projectile = false
+
+var current_projectile: BaseProjectile  # The projectile we'll fire
+@export var projectile_config: ProjectileConfig  # Assigned in inspector or code
 
 func _ready() -> void:
 	if body_sprite:
 		adjust_collision_bounds(body_sprite.texture)
+		
+		# Set ground check distance to 1/4 of tank height
+		ground_check_distance = body_sprite.texture.get_height() * 0.25
+	else:
+		# Fallback if no sprite
+		var rect_shape = collision_shape.shape as RectangleShape2D
+		if rect_shape:
+			ground_check_distance = rect_shape.size.y * 0.25
+	
+	# Configure center ray for local "down" checking
+	center_ray.target_position = Vector2(0, ground_check_distance)
+	center_ray.enabled = true
+	left_ray.target_position = Vector2(0, ground_check_distance).rotated(0.5)
+	left_ray.enabled = true
+	right_ray.target_position = Vector2(0, ground_check_distance).rotated(-0.5)
+	right_ray.enabled = true
+	
+	# Create initial projectile for trajectory preview
+	create_new_projectile()
+	
+	GameStateManager.declare_player(self)
+
+func create_new_projectile():
+	# Clean up old projectile if it exists and hasn't been fired
+	if current_projectile and not current_projectile.fired:
+		current_projectile.queue_free()
+	
+	# Create new projectile with config (or default if none set)
+	current_projectile = BaseProjectile.new(projectile_config)
+	get_parent().call_deferred('add_child',current_projectile)
+	
+	# Connect the hit signal
+	current_projectile.projectile_hit.connect(_on_projectile_hit)
+
+func check_grounded_state(move_dir: int = 0, extend_rays: bool = false) -> void:
+	if extend_rays:
+		adjust_rays(300.0)
+	var center_hit = center_ray.is_colliding()
+	var left_hit = left_ray.is_colliding()
+	var right_hit = right_ray.is_colliding()
+	
+	# We're grounded if ANY ray hits
+	if center_hit or left_hit or right_hit:
+		# Check if we're not too upside down
+		var world_up = Vector2.UP
+		var tank_up = Vector2.UP.rotated(rotation)
+		var angle_from_upright = rad_to_deg(world_up.angle_to(tank_up))
+		
+		if abs(angle_from_upright) < stick_angle_threshold:
+			is_grounded = true
+			
+			# Smart normal selection based on movement and ray hits
+			if move_dir < 0 and left_hit:
+				# Moving left, prioritize left ray
+				ground_normal = left_ray.get_collision_normal()
+			elif move_dir > 0 and right_hit:
+				# Moving right, prioritize right ray
+				ground_normal = right_ray.get_collision_normal()
+			elif center_hit:
+				# Not moving or preferred ray not hitting, use center
+				ground_normal = center_ray.get_collision_normal()
+			elif left_hit and right_hit:
+				# No center, both sides hitting (valley) - average them
+				ground_normal = (left_ray.get_collision_normal() + right_ray.get_collision_normal()).normalized()
+			elif left_hit:
+				ground_normal = left_ray.get_collision_normal()
+			else:  # right_hit
+				ground_normal = right_ray.get_collision_normal()
+		else:
+			is_grounded = false
+			ground_normal = Vector2.UP
+	else:
+		if is_on_floor():
+			is_grounded = true
+			ground_normal = Vector2.UP
+		else:
+			is_grounded = false
+			ground_normal = Vector2.UP
+	if extend_rays:
+		adjust_rays()
+
+func adjust_rays(multiplier : float = 1.0):
+	center_ray.target_position = Vector2(0, ground_check_distance*multiplier)
+	left_ray.target_position = Vector2(0, ground_check_distance*multiplier).rotated(0.5)
+	right_ray.target_position = Vector2(0, ground_check_distance*multiplier).rotated(-0.5)
 
 func adjust_collision_bounds(body_texture : Texture2D):
 	(collision_shape.shape as RectangleShape2D).size = body_texture.get_size()
 
 func _physics_process(delta: float):
-	# Apply gravity
-	if not is_on_floor() or !center_ray.is_colliding():
-		velocity.y += gravity * delta
-	
-	# Handle input
+	# Get movement input first
 	var direction = 0
-	if Input.is_key_pressed(KEY_CTRL):
+	if Input.is_key_pressed(KEY_CTRL) and is_active:
 		if Input.is_action_pressed("move_left"):
 			direction = -1
 		elif Input.is_action_pressed("move_right"):
 			direction = 1
-	else:
+	var nearly_stopped = velocity.length() < 20.0
+	check_grounded_state(direction, nearly_stopped)
+	
+	# Handle aiming/power controls (works whether grounded or airborne)
+	if not Input.is_key_pressed(KEY_CTRL) and is_active:
 		if Input.is_action_pressed("aim_left"):
-			aim_mod = clamp(aim_mod - 1.0, -66.0, 66.0)
-			update_trajectory_cache()
+			if aim_mod != -66.0:
+				aim_mod = clamp(aim_mod - 1.0, -66.0, 66.0)
+				update_trajectory_cache()
+			else:
+				rotation -= delta * PI / 1.5
 		elif Input.is_action_pressed("aim_right"):
-			aim_mod = clamp(aim_mod + 1.0, -66.0, 66.0)
+			if aim_mod != 66.0:
+				aim_mod = clamp(aim_mod + 1.0, -66.0, 66.0)
+				update_trajectory_cache()
+			else:
+				rotation += delta * PI / 1.5
+	if is_active:
+		if Input.is_action_pressed("power_up"):
+			power = clamp(power + 500.0*delta, 100.0, 1000.0)
 			update_trajectory_cache()
-	if Input.is_action_pressed("power_up"):
-		power = clamp(power + 500.0*delta, 100.0, 1000.0)
-		update_trajectory_cache()
-	elif Input.is_action_pressed("power_down"):
-		power = clamp(power - 500.0*delta, 100.0, 1000.0)
-		update_trajectory_cache()
-	# Show trajectory while aiming
-	show_trajectory = Input.is_action_pressed("aim_left") or Input.is_action_pressed("aim_right") or Input.is_action_pressed("power_up") or Input.is_action_pressed("power_down")
-	
-	# Update trajectory if position changed significantly
-	if global_position.distance_to(last_position) > 10.0:
-		update_trajectory_cache()
-	
-	if Input.is_action_just_pressed("fire"):
-		var turret_tip = global_position + turret_origin_offset + Vector2(50, 0).rotated(global_rotation + deg_to_rad(aim_angle + aim_mod))
-		var firing_angle = global_rotation + deg_to_rad(aim_angle + aim_mod)
-		var p = Projectile.new(turret_tip, firing_angle, power)
-		p.projectile_hit.connect(_on_projectile_hit)
-		get_parent().add_child(p)
-	
-	# Move along the tank's forward direction (accounting for slope)
-	if direction != 0:
-		if !center_ray.is_colliding():
-			if !right_ray.is_colliding() and direction > 0:
-				rotate(TAU/rotation_divisor)
-			if !left_ray.is_colliding() and direction < 0:
-				rotate(-TAU/rotation_divisor)
-			rotation_divisor = clamp(rotation_divisor - 10.0, 100.0, 300.0)
-		else:
-			rotation_divisor = 500.0
-		var forward = Vector2(direction, 0).rotated(rotation)
-		velocity.x = forward.x * move_speed
-		velocity.y = forward.y * move_speed
+		elif Input.is_action_pressed("power_down"):
+			power = clamp(power - 500.0*delta, 100.0, 1000.0)
+			update_trajectory_cache()
 		
-		# Rotate wheels visually
-		if left_wheel:
-			left_wheel.rotation -= direction * delta * 5
-		if right_wheel:
-			right_wheel.rotation -= direction * delta * 5
-	else:
-		if !center_ray.is_colliding():
-			if !right_ray.is_colliding() and left_ray.is_colliding():
-				rotate(TAU/rotation_divisor)
-			if !left_ray.is_colliding() and right_ray.is_colliding():
-				rotate(-TAU/rotation_divisor)
-			rotation_divisor = clamp(rotation_divisor - 10.0, 100.0, 300.0)
+		# Show trajectory while aiming
+		show_trajectory = Input.is_action_pressed("aim_left") or Input.is_action_pressed("aim_right") or Input.is_action_pressed("power_up") or Input.is_action_pressed("power_down")
+		
+		# Update trajectory if position changed significantly
+		if global_position.distance_to(last_position) > 10.0:
+			update_trajectory_cache()
+		
+		# Handle firing
+		if Input.is_action_just_pressed("fire") and is_active and !fired_projectile:
+			var turret_tip = global_position + turret_origin_offset.rotated(global_rotation) + Vector2(50, 0).rotated(global_rotation + deg_to_rad(aim_angle + aim_mod))
+			var firing_angle = global_rotation + deg_to_rad(aim_angle + aim_mod)
+			#var p = Projectile.new(turret_tip, firing_angle, power)
+			#p.projectile_hit.connect(_on_projectile_hit)
+			#get_parent().add_child(p)
+			#await get_tree().process_frame
+			#fired_projectile = true
+			# Fire the current projectile
+			current_projectile.fire(turret_tip, firing_angle, power)
+			GameStateManager.declare_projectile(current_projectile)
+			
+			# Create a new projectile for next shot
+			create_new_projectile()
+			
+			await get_tree().process_frame
+			fired_projectile = true
+	
+	# Movement and physics based on grounded state
+	if is_grounded:
+		# GROUNDED: Can move and align to terrain
+		if direction != 0:
+			# Move along the terrain surface (perpendicular to normal)
+			var move_direction = ground_normal.rotated(PI/2 * direction)
+			velocity = move_direction * move_speed
+			
+			# Rotate wheels visually
+			if left_wheel:
+				left_wheel.rotation -= direction * delta * 5
+			if right_wheel:
+				right_wheel.rotation -= direction * delta * 5
 		else:
-			rotation_divisor = 500.0
-		velocity.x = move_toward(velocity.x, 0, move_speed * delta)
-	
-	# Align to terrain
-	align_to_terrain(delta)
-	
-	# Move and slide
+			# Slow to a stop when not moving
+			velocity = velocity.move_toward(Vector2.ZERO, move_speed * delta * 3)
+		
+		# Align tank to terrain normal
+		var target_rotation = ground_normal.angle() + PI/2
+		rotation = lerp_angle(rotation, target_rotation, rotation_speed * delta * 2)
+		
+		# Snap to ground to prevent floating
+		if center_ray.is_colliding():
+			var hit_point = center_ray.get_collision_point()
+			var desired_pos = hit_point + ground_normal * (ground_check_distance * 0.5)
+			global_position = global_position.lerp(desired_pos, delta * 30)
+		
+	else:
+		# AIRBORNE: Only gravity affects the tank
+		velocity.y += gravity * delta
+		# Maintain some X velocity decay for more natural arcs
+		if direction != 0:
+			velocity.x += 1000.0 * delta * direction
+		velocity.x *= 0.99
+	# Apply movement
 	move_and_slide()
+	turret_shape.rotation = turret_origin_offset.angle_to(turret_origin_offset + turret_length.rotated(deg_to_rad(aim_angle + aim_mod)))
+	turret_shape.position = turret_origin_offset.lerp(turret_origin_offset + turret_length.rotated(deg_to_rad(aim_angle + aim_mod)), 0.5)
 	queue_redraw()
 
+#func update_trajectory_cache():
+	#if !show_trajectory or !perma_show_trajectory:
+		#return
+	#var current_aim = aim_angle + aim_mod
+	#
+	## Only recalculate if aim or position changed significantly
+	#if abs(current_aim - last_aim_angle) > 0.5 or global_position.distance_to(last_position) > 5.0 \
+	#or abs(power - last_power_level) > 0.5:
+		## Calculate turret tip in local space (exactly like drawing)
+		#var local_turret_tip = turret_origin_offset + turret_length.rotated(deg_to_rad(current_aim))
+		## Transform to world space
+		#var world_turret_tip = global_position + local_turret_tip.rotated(global_rotation)
+		## Firing angle is tank rotation + aim
+		#var firing_angle = global_rotation + deg_to_rad(current_aim)
+		#
+		#var terrain = get_parent().get_node_or_null("Terrain")
+		#cached_trajectory = Projectile.get_trajectory_arc(world_turret_tip, firing_angle, power, terrain, 15)
+		#
+		#last_aim_angle = current_aim
+		#last_position = global_position
+		#last_power_level = power
+
 func update_trajectory_cache():
+	if !show_trajectory or !perma_show_trajectory:
+		return
 	var current_aim = aim_angle + aim_mod
 	
 	# Only recalculate if aim or position changed significantly
 	if abs(current_aim - last_aim_angle) > 0.5 or global_position.distance_to(last_position) > 5.0 \
 	or abs(power - last_power_level) > 0.5:
-		# Calculate turret tip in local space (exactly like drawing)
+		# Calculate turret tip (same as before)
 		var local_turret_tip = turret_origin_offset + turret_length.rotated(deg_to_rad(current_aim))
-		# Transform to world space
 		var world_turret_tip = global_position + local_turret_tip.rotated(global_rotation)
-		# Firing angle is tank rotation + aim
 		var firing_angle = global_rotation + deg_to_rad(current_aim)
 		
 		var terrain = get_parent().get_node_or_null("Terrain")
-		cached_trajectory = Projectile.get_trajectory_arc(world_turret_tip, firing_angle, power, terrain, 15)
+		
+		# Use the actual projectile's trajectory calculation
+		# This ensures preview matches what will actually fire
+		cached_trajectory = BaseProjectile.get_trajectory_arc(world_turret_tip, firing_angle, power, terrain, 15, current_projectile.config)
 		
 		last_aim_angle = current_aim
 		last_position = global_position
@@ -506,58 +1187,376 @@ func align_to_terrain(delta: float):
 		if lowest_point < 5 and lowest_point > -5:
 			position.y += lowest_point
 
-func _on_projectile_hit(impact_pos: Vector2, impact_angle: float, target_type: String, target: Node):
+func _on_projectile_hit(impact_pos: Vector2, impact_angle: float, target_type: String, targets: Array):
 	print("Hit %s at %s with angle %s" % [target_type, impact_pos, rad_to_deg(impact_angle)])
+	if targets.size() > 0:
+		if target_type == "terrain":
+			targets[0].get_parent().get_parent().call_deferred('create_crater', impact_pos, 50.0 + randf_range(-10, 10))
+		elif target_type == "tank":
+			targets[0].get_hit(impact_pos.angle_to_point(targets[0].position))
+		else:
+			for target in targets:
+				if target is StaticBody2D: # Terrain
+					if target.get_parent().get_parent().has_method("create_crater"):
+						target.get_parent().get_parent().call_deferred('create_crater', impact_pos, 50.0 + randf_range(-10, 10))
+				elif target is CharacterBody2D: # Tank
+					target.get_hit(impact_pos.angle_to_point(target.position))
+	GameStateManager.end_turn(self)
 
-func get_aim_angle() -> float:
-	# For aiming your weapon later
-	return rotation
+#func get_hit(impact_angle: float, strength_multiplier: float = 1.0) -> void:
+	#var base_knockback_force = 800.0  # Base knockback strength
+	#var knockback_force = base_knockback_force * strength_multiplier
+	#
+	#var launch_angle: float
+	#
+	#if is_grounded:
+		## Grounded: reflect the impact angle horizontally (bounce off ground)
+		## This simulates the tank bouncing off the terrain
+		#launch_angle = -impact_angle
+		#
+		## Ensure we're launching upward for dramatic effect
+		#if sin(launch_angle) > 0:  # If reflected angle still points downward
+			#launch_angle = PI - launch_angle  # Flip to point upward
+			#
+	#else:
+		## Airborne: continue in the direction of impact
+		#launch_angle = impact_angle
+	#
+	## Apply knockback velocity
+	#var knockback_velocity = Vector2(cos(launch_angle), sin(launch_angle)) * knockback_force
+	#velocity += knockback_velocity
+	#
+	## Force tank to become airborne for dramatic knockback effect
+	#is_grounded = false
+	#
+	#print("Tank hit! Launch angle: %s degrees, Force: %s" % [rad_to_deg(launch_angle), knockback_force])
+
+func get_hit(impact_angle: float, strength_multiplier: float = 1.0) -> void:
+	var base_knockback_force = 800.0
+	var knockback_force = base_knockback_force * strength_multiplier
+	
+	# Get the impact direction as a velocity vector
+	var impact_direction = Vector2(cos(impact_angle), sin(impact_angle))
+	#var distance = abs()
+	
+	var knockback_velocity: Vector2
+	
+	if is_grounded:
+		# Grounded: horizontal reflection (flip Y component, keep X)
+		# This simulates bouncing off the ground
+		knockback_velocity = Vector2(impact_direction.x, -abs(impact_direction.y)) * knockback_force
+	else:
+		# Airborne: continue in the impact direction
+		knockback_velocity = impact_direction * knockback_force
+	
+	# Apply the knockback
+	velocity += knockback_velocity
+	is_grounded = false
+	
+	print("Tank hit! Knockback: %s, Force: %s" % [knockback_velocity, knockback_force])
 
 func _draw() -> void:
 	if !body_sprite:
 		draw_rect(collision_shape.shape.get_rect(), Color.CADET_BLUE)
 	draw_circle(turret_origin_offset, 10.0, Color.AQUA)
 	draw_line(turret_origin_offset, turret_origin_offset + turret_length.rotated(deg_to_rad(aim_angle + aim_mod)), Color.AQUAMARINE, 10.0)
+	# draw power gauge over turret barrel
+	var power_offset = power / 1000.0
+	draw_line(turret_origin_offset, turret_origin_offset + Vector2((turret_length.x * 0.9) * power_offset, 0).rotated(deg_to_rad(aim_angle + aim_mod)), Color.CORAL, 2.0)
 	
 	# Draw cached trajectory (only while aiming)
 	# turned off for now, uncomment the following if statement and comment the other one to switch.
-	#if (show_trajectory and cached_trajectory.size() > 1): 
-	if perma_show_trajectory:
+	if (show_trajectory and cached_trajectory.size() > 1 and is_active): 
+	#if perma_show_trajectory:
 		for i in range(cached_trajectory.size() - 1):
 			if i % 2 == 0:  # Every other point for performance
 				var local_start = to_local(cached_trajectory[i])
 				var local_end = to_local(cached_trajectory[i + 1])
 				draw_line(local_start, local_end, Color.WHITE, 2.0)
-	
 
 _______________
 _______________
 (terrain.gd):
 extends Node2D
+class_name Terrain
+
+var terrain_scene = preload("res://terrain.tscn")
+
+var initial_poly = null
+var initial_type = null
 @onready var poly : Polygon2D = $Polygon2D
 @onready var body : StaticBody2D = $Polygon2D/StaticBody2D
 @onready var body_coll : CollisionPolygon2D = $Polygon2D/StaticBody2D/CollisionPolygon2D
 @export var noise1 : FastNoiseLite = FastNoiseLite.new()
 @export var noise2 : FastNoiseLite = FastNoiseLite.new()
+
+@export var crater_base_radius: float = 80.0 #
+@export var crater_randomness: float = 0.3   # I haven't plugged these in yet
+@export var crater_points: int = 24          #
+
 var base_ground_level = 1200.0
 var slope_range = 100.0
+var vertex_gap = 30.0
 
+var child_terrains : Array[Terrain] = []
+var parent_terrain : Terrain
+
+func _init(_polygon : PackedVector2Array = [], _type = -1) -> void:
+	if _polygon.size()> 0:
+		initial_poly = _polygon.duplicate()
+	if _type != -1:
+		initial_type = _type
+	
 func _ready() -> void:
+	if !poly:
+		await get_tree().process_frame
+	if !initial_poly:
+		noise1.seed = randi()
+		noise2.seed = randi()
+		
+		var points : PackedVector2Array = []
+		points.append(Vector2(vertex_gap * -300, base_ground_level * 4))
+		for i in range(vertex_gap * -300, vertex_gap * 300, vertex_gap): # generate base terrain
+			points.append(Vector2(i, int(base_ground_level + (slope_range * (noise1.get_noise_1d(i)+noise2.get_noise_1d(i))))))
+		var neighbors = []
+		for ii in points.size(): # make terrain less jaggy
+			if ii != 0 and ii != points.size() - 1:
+				neighbors = [int(points[ii-1].y), int(points[ii+1].y)]
+				points[ii] = Vector2(points[ii].x, neighbors[0]).lerp(Vector2(points[ii].x, neighbors[1]), 0.5)
+		points.append(Vector2(vertex_gap * 300, base_ground_level * 4))
+		poly.polygon = points
+		body_coll.polygon = points
+	else:
+		poly.polygon = initial_poly
+		body_coll.polygon = initial_poly
+
+func create_crater(center: Vector2, radius: float, shape: String = "circle"):
+	var current_polygon = poly.polygon.duplicate()
+	var crater_shape
+	match shape:
+		"circle":
+			# Create crater as a circle polygon
+			crater_shape = create_circle_polygon(center, radius, 32)
+		#"capsule": #TODO: Implement other shapes
+			#crater_shape = create_capsule_polygon(center, radius, 32)
 	
-	noise1.seed = randi()
-	noise2.seed = randi()
+	# Subtract crater from terrain using Godot's geometry functions
+	var result_polygons = Geometry2D.clip_polygons(current_polygon, crater_shape)
+	for result in result_polygons:
+		if Geometry2D.is_polygon_clockwise(result):
+			result_polygons.erase(result)
+	if result_polygons.size() > 0:
+		poly.queue_free()
+		body_coll.queue_free()
+		for polygon in result_polygons:
+			var new_terrain : Terrain = terrain_scene.instantiate()
+			new_terrain.parent_terrain = self
+			new_terrain.initial_poly = polygon
+			add_child(new_terrain)
+			child_terrains.append(new_terrain)
+		
+		# Use the largest resulting polygon (in case crater splits terrain)
+		#var largest_polygon = result_polygons[0]
+		#for polygon in result_polygons:
+			#if polygon.size() > largest_polygon.size():
+				#largest_polygon = polygon
+		#
+		#poly.polygon = largest_polygon
+		#body_coll.polygon = largest_polygon
 	
-	var points : PackedVector2Array = []
-	points.append(Vector2(-3000, base_ground_level * 4))
-	for i in range(-3000, 3000, 10): # generate base terrain
-		points.append(Vector2(i, int(base_ground_level + (slope_range * (noise1.get_noise_1d(i)+noise2.get_noise_1d(i))))))
-	var neighbors = []
-	for ii in points.size(): # make terrain less jaggy
-		if ii != 0 and ii != points.size() - 1:
-			neighbors = [int(points[ii-1].y), int(points[ii+1].y)]
-			points[ii] = Vector2(points[ii].x, neighbors[0]).lerp(Vector2(points[ii].x, neighbors[1]), 0.5)
-	points.append(Vector2(3000, base_ground_level * 4))
-	poly.polygon = points
-	body_coll.polygon = points
+	if randf() > 0.6:
+		vertex_fill(center, radius)
+
+func create_circle_polygon(center: Vector2, radius: float, segments: int) -> PackedVector2Array:
+	var circle_points: PackedVector2Array = []
+	for i in range(segments):
+		var angle = (float(i) / float(segments)) * TAU
+		var point = (center + Vector2(cos(angle), sin(angle)) * radius) + Vector2(randf_range(-2, 2),randf_range(-2,2))
+		circle_points.append(point)
+	return circle_points
+
+func vertex_fill(crater_center: Vector2, crater_radius: float):
+	var current_polygon = poly.polygon.duplicate()
+	var new_polygon: PackedVector2Array = []
+	var fill_radius = crater_radius * 3.0  # Only process 3x crater radius
+	
+	new_polygon.append(current_polygon[0])
+	for i in current_polygon.size() - 2:
+		if i != 0:
+			var current_vec : Vector2 = current_polygon[i]
+			var next_vec : Vector2 = current_polygon[i+1]
+			
+			# Only process edges near the crater
+			var midpoint = (current_vec + next_vec) * 0.5
+			if midpoint.distance_to(crater_center) <= fill_radius:
+				var distance : float = current_vec.distance_to(next_vec)
+				new_polygon.append(current_vec)
+				if distance > vertex_gap:
+					var num_divisions : int = min(5, int(distance / vertex_gap))  # Limit subdivisions
+					for ii in range(1, num_divisions + 1):
+						var t : float = float(ii) / float(num_divisions + 1)
+						var inbetween : Vector2 = current_vec.lerp(next_vec, t)
+						new_polygon.append(inbetween)
+			else:
+				# Just add the vertex as-is for distant areas
+				new_polygon.append(current_vec)
+	
+	new_polygon.append(current_polygon[-1])
+	poly.polygon = new_polygon
+	body_coll.polygon = new_polygon
 
 _______________
+  CONFIGURATIONS:
+	PROJECTILES:
+		standard_shell.tres
+		standard_shell_2.tres
+  PROJECTILE_COMPONENTS:
+	  effect_component.tres
+	  lifetime_component.tres
+	  movement_component.tres
+	  projectile_config.tres
+	  trigger_component.tres
+	  visual_component.tres
+  _______________
+  (effect.gd):
+  extends Resource
+  class_name EffectComponent
+  
+  enum EffectType { DAMAGE_CRATER, ADD_TERRAIN, SPAWN_PROJECTILES, ROPE_BRIDGE }
+  
+  @export var effect_type: EffectType = EffectType.DAMAGE_CRATER
+  @export var crater_size: float = 50.0
+  @export var spawn_count: int = 5
+  
+  _______________
+  _______________
+  (lifetime.gd):
+  extends Resource
+  class_name LifetimeComponent
+  
+  enum DurationType { INSTANT, TURN_BASED }
+  
+  @export var duration_type: DurationType = DurationType.INSTANT
+  @export var turn_count: int = 3
+  
+  _______________
+  _______________
+  (movement.gd):
+  extends Resource
+  class_name MovementComponent
+  
+  enum TrajectoryType { ARC, STRAIGHT }
+  enum PhysicsMode { NORMAL_GRAVITY, REVERSE_GRAVITY, NO_GRAVITY, }
+  enum CollisionResponse { STOP, BOUNCE, PASS_THROUGH }
+  
+  @export var trajectory_type: TrajectoryType = TrajectoryType.ARC
+  @export var physics_mode: PhysicsMode = PhysicsMode.NORMAL_GRAVITY
+  @export var collision_response: CollisionResponse = CollisionResponse.STOP
+  @export var bounce_count: int = 1
+  
+  _______________
+  _______________
+  (proj_config.gd):
+  @tool
+  extends Resource
+  class_name ProjectileConfig
+  
+  @export var config_name: String = "Standard Shell"
+  @export var movement: MovementComponent
+  @export var trigger: TriggerComponent
+  @export var effect: EffectComponent
+  @export var visual: VisualComponent
+  @export var lifetime: LifetimeComponent
+  
+  @export_group("File Operations")
+  #@export var save_config: bool = false : set = _save_config
+  #@export var load_config: bool = false : set = _load_config
+  
+  @export_tool_button("save") var save_button = _save_config.bind(self)
+  @export_tool_button("load") var load_button = _load_config.bind(self)
+  
+  const CONFIG_DIR = "res://configurations/projectiles/"
+  
+  signal config_changed()
+  
+  func _init():
+  	property_list_changed.connect(func (): config_changed.emit())
+  	# Create default components if none assigned
+  	if not movement:
+  		movement = MovementComponent.new()
+  	if not trigger:
+  		trigger = TriggerComponent.new()
+  	if not effect:
+  		effect = EffectComponent.new()
+  	if not visual:
+  		visual = VisualComponent.new()
+  	if not lifetime:
+  		lifetime = LifetimeComponent.new()
+  
+  func _save_config(value):
+  	if not value:
+  		return
+  		
+  	# Ensure directory exists
+  	if not DirAccess.dir_exists_absolute(CONFIG_DIR):
+  		DirAccess.open("res://").make_dir_recursive(CONFIG_DIR)
+  	
+  	# Save as .tres file
+  	var file_path = CONFIG_DIR + config_name.to_snake_case() + ".tres"
+  	var result = ResourceSaver.save(self, file_path)
+  	
+  	if result == OK:
+  		print("Config saved to: ", file_path)
+  	else:
+  		print("Failed to save config")
+  
+  func _load_config(value):
+  	if not value:
+  		return
+  		
+  	# This will trigger the file dialog in the inspector
+  	# Godot will automatically open file dialog when you click the folder icon
+  	# that appears next to export_file properties
+  	pass
+  
+  # Alternative: Custom file dialog (more control)
+  @export_file("*.tres", "res://configurations/projectiles") var load_file_path: String : set = _on_file_selected
+  
+  func _on_file_selected(path: String):
+  	if path.is_empty():
+  		return
+  		
+  	var loaded_config = load(path)
+  	if loaded_config is ProjectileConfig:
+  		# Copy values from loaded config
+  		config_name = loaded_config.config_name
+  		movement = loaded_config.movement
+  		trigger = loaded_config.trigger
+  		effect = loaded_config.effect
+  		visual = loaded_config.visual
+  		lifetime = loaded_config.lifetime
+  		print("Config loaded from: ", path)
+  	else:
+  		print("Invalid config file")
+  
+  _______________
+  _______________
+  (trigger.gd):
+  extends Resource
+  class_name TriggerComponent
+  
+  enum ActivationType { CONTACT, TIMER, ALTITUDE, BURROW_EMERGE }
+  
+  @export var activation_type: ActivationType = ActivationType.CONTACT
+  @export var timer_delay: float = 2.0
+  
+  _______________
+  _______________
+  (visual.gd):
+  extends Resource
+  class_name VisualComponent
+  
+  @export var projectile_sprite: Texture2D
+  @export var trail_color: Color = Color.ORANGE
+  
+  _______________

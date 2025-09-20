@@ -1,6 +1,10 @@
 extends Node2D
 class_name Terrain
 
+var terrain_scene = preload("res://terrain.tscn")
+
+var initial_poly = null
+var initial_type = null
 @onready var poly : Polygon2D = $Polygon2D
 @onready var body : StaticBody2D = $Polygon2D/StaticBody2D
 @onready var body_coll : CollisionPolygon2D = $Polygon2D/StaticBody2D/CollisionPolygon2D
@@ -15,23 +19,37 @@ var base_ground_level = 1200.0
 var slope_range = 100.0
 var vertex_gap = 30.0
 
+var child_terrains : Array[Terrain] = []
+var parent_terrain : Terrain
+
+func _init(_polygon : PackedVector2Array = [], _type = -1) -> void:
+	if _polygon.size()> 0:
+		initial_poly = _polygon.duplicate()
+	if _type != -1:
+		initial_type = _type
+	
 func _ready() -> void:
-	
-	noise1.seed = randi()
-	noise2.seed = randi()
-	
-	var points : PackedVector2Array = []
-	points.append(Vector2(vertex_gap * -300, base_ground_level * 4))
-	for i in range(vertex_gap * -300, vertex_gap * 300, vertex_gap): # generate base terrain
-		points.append(Vector2(i, int(base_ground_level + (slope_range * (noise1.get_noise_1d(i)+noise2.get_noise_1d(i))))))
-	var neighbors = []
-	for ii in points.size(): # make terrain less jaggy
-		if ii != 0 and ii != points.size() - 1:
-			neighbors = [int(points[ii-1].y), int(points[ii+1].y)]
-			points[ii] = Vector2(points[ii].x, neighbors[0]).lerp(Vector2(points[ii].x, neighbors[1]), 0.5)
-	points.append(Vector2(vertex_gap * 300, base_ground_level * 4))
-	poly.polygon = points
-	body_coll.polygon = points
+	if !poly:
+		await get_tree().process_frame
+	if !initial_poly:
+		noise1.seed = randi()
+		noise2.seed = randi()
+		
+		var points : PackedVector2Array = []
+		points.append(Vector2(vertex_gap * -300, base_ground_level * 4))
+		for i in range(vertex_gap * -300, vertex_gap * 300, vertex_gap): # generate base terrain
+			points.append(Vector2(i, int(base_ground_level + (slope_range * (noise1.get_noise_1d(i)+noise2.get_noise_1d(i))))))
+		var neighbors = []
+		for ii in points.size(): # make terrain less jaggy
+			if ii != 0 and ii != points.size() - 1:
+				neighbors = [int(points[ii-1].y), int(points[ii+1].y)]
+				points[ii] = Vector2(points[ii].x, neighbors[0]).lerp(Vector2(points[ii].x, neighbors[1]), 0.5)
+		points.append(Vector2(vertex_gap * 300, base_ground_level * 4))
+		poly.polygon = points
+		body_coll.polygon = points
+	else:
+		poly.polygon = initial_poly
+		body_coll.polygon = initial_poly
 
 func create_crater(center: Vector2, radius: float, shape: String = "circle"):
 	var current_polygon = poly.polygon.duplicate()
@@ -45,16 +63,27 @@ func create_crater(center: Vector2, radius: float, shape: String = "circle"):
 	
 	# Subtract crater from terrain using Godot's geometry functions
 	var result_polygons = Geometry2D.clip_polygons(current_polygon, crater_shape)
-	
+	for result in result_polygons:
+		if Geometry2D.is_polygon_clockwise(result):
+			result_polygons.erase(result)
 	if result_polygons.size() > 0:
-		# Use the largest resulting polygon (in case crater splits terrain)
-		var largest_polygon = result_polygons[0]
+		poly.queue_free()
+		body_coll.queue_free()
 		for polygon in result_polygons:
-			if polygon.size() > largest_polygon.size():
-				largest_polygon = polygon
+			var new_terrain : Terrain = terrain_scene.instantiate()
+			new_terrain.parent_terrain = self
+			new_terrain.initial_poly = polygon
+			add_child(new_terrain)
+			child_terrains.append(new_terrain)
 		
-		poly.polygon = largest_polygon
-		body_coll.polygon = largest_polygon
+		# Use the largest resulting polygon (in case crater splits terrain)
+		#var largest_polygon = result_polygons[0]
+		#for polygon in result_polygons:
+			#if polygon.size() > largest_polygon.size():
+				#largest_polygon = polygon
+		#
+		#poly.polygon = largest_polygon
+		#body_coll.polygon = largest_polygon
 	
 	if randf() > 0.6:
 		vertex_fill(center, radius)
