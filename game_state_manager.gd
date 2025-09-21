@@ -35,4 +35,12 @@ func _process(delta: float) -> void:
 			Cam.split = true
 	else:
 		if Cam.split:
+			if Cam.x_inverted:
+				Cam.x_invert(false)
 			Cam.split = false
+	if players[0].position.x > players[1].position.x:
+		if !Cam.x_inverted:
+			Cam.x_invert(true)
+	else:
+		if Cam.x_inverted:
+			Cam.x_invert(false)

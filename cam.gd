@@ -2,6 +2,7 @@ extends Camera2D
 
 @export_range(3.0, 100.0) var move_speed = 3.0
 @export_range(0.5, 2.0) var zoom_speed = 1.0
+var x_inverted = false
 var target_zoom : float = 1.0
 var current_zoom : float = 1.0
 var target_pos := Vector2.ZERO
@@ -57,6 +58,18 @@ func _physics_process(delta: float) -> void:
 		if split_layer.visible != split:
 			toggle_split(split)
 
+func x_invert(val:bool):
+	if !left_cam_path or !right_cam_path:
+		return
+	if val:
+		targets[0].remote_transform.remote_path = right_cam_path
+		targets[1].remote_transform.remote_path = left_cam_path
+		x_inverted = true
+	else:
+		targets[0].remote_transform.remote_path = left_cam_path
+		targets[1].remote_transform.remote_path = right_cam_path
+		x_inverted = false
+
 func toggle_split(val:bool):
 	if (left_cam.get_parent() as SubViewport).world_2d != get_world_2d():
 		var world = get_world_2d()
@@ -67,6 +80,8 @@ func toggle_split(val:bool):
 			split_layer.visible = val
 		else:
 			if targets.size() > 0:
+				var min_x = INF
+				var max_x = -INF
 				for i in targets:
 					if i is Tank:
 						if !left_cam_path:

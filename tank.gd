@@ -329,14 +329,14 @@ func _on_projectile_hit(impact_pos: Vector2, impact_angle: float, target_type: S
 	print("Hit %s at %s with angle %s" % [target_type, impact_pos, rad_to_deg(impact_angle)])
 	if targets.size() > 0:
 		if target_type == "terrain":
-			targets[0].get_parent().get_parent().call_deferred('create_crater', impact_pos, 50.0 + randf_range(-10, 10))
+			targets[0].get_parent().get_parent().call_deferred('create_crater', impact_pos, impact_angle, 50.0 + randf_range(-10, 10))
 		elif target_type == "tank":
 			targets[0].get_hit(impact_pos.angle_to_point(targets[0].position))
 		else:
 			for target in targets:
 				if target is StaticBody2D: # Terrain
 					if target.get_parent().get_parent().has_method("create_crater"):
-						target.get_parent().get_parent().call_deferred('create_crater', impact_pos, 50.0 + randf_range(-10, 10))
+						target.get_parent().get_parent().call_deferred('create_crater', impact_pos, impact_angle, 50.0 + randf_range(-10, 10))
 				elif target is CharacterBody2D: # Tank
 					target.get_hit(impact_pos.angle_to_point(target.position))
 	GameStateManager.end_turn(self)
